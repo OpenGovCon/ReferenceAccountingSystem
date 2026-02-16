@@ -232,7 +232,7 @@ Evidence output
 - `subledger_gl_tieout.csv`
 
 ## (11) Interim (at least monthly) cost determination via routine posting
-Implemented: `Complete`
+Implemented: `Partial`
 
 Files
 - `GovConMoney.Application/Services/MonthlyCloseComplianceService.cs`
@@ -247,13 +247,17 @@ How it works
 Validation tests
 - `Monthly close compliance flags overdue open periods`
 - `Period close requires manager role`
+- `Generate auditor binder evidence package`
 
 Evidence output
+- `monthly_close_compliance.csv`
+- `monthly_close_compliance.json`
 - `audit_trail.csv`
 - `manager_review_events.csv`
 
 Human policy engagement
 - Meeting the "at least monthly" standard also depends on operational discipline to execute close/posting on schedule.
+- Hosted-service cadence execution is wired, but there is no dedicated end-to-end scheduler execution test.
 
 ## (12) Exclusion of unallowables from costs charged to Government contracts
 Implemented: `Complete`
@@ -271,6 +275,8 @@ Validation tests
 - `Billing generation excludes unallowable costs`
 
 Evidence output
+- `unallowable_costs.csv`
+- `unallowable_costs.json`
 - `invoice_lines.csv`
 - `billed_to_booked_reconciliation.csv`
 
@@ -297,7 +303,7 @@ Evidence output
 - `clin_summary.csv`
 
 ## (14) Segregation of preproduction costs from production costs (as applicable)
-Implemented: `Absent`
+Implemented: `Planned`
 
 Files
 - `N/A`
@@ -424,8 +430,93 @@ Gaps
 Human policy engagement
 - CAS applicability determination, disclosure statement governance, and policy interpretation are accounting/legal governance responsibilities.
 
+## Auditor Evidence Lookup By Requirement
+
+### (c)(1) Internal control environment, framework, and structure
+- Generate a fresh binder with `dotnet run --project GovConMoney.Tests/GovConMoney.Tests.csproj`.
+- Open latest folder under `GovConMoney.Tests/Runner/AuditBinderOutput/`.
+- Review `audit_trail.csv` for control events and `manager_review_events.csv` for management-control actions.
+- Use `trial_balance.csv` as accounting-framework evidence.
+
+### (c)(2) Direct vs indirect segregation
+- In binder, review `labor_distribution.csv` and `project_summary.csv` for cost-type rollups.
+- Cross-check `invoice_lines.csv` to confirm billed lines exclude disallowed classifications.
+
+### (c)(3) Direct costs by contract
+- Use `clin_summary.csv` and `project_summary.csv` for contract-level accumulation.
+- Trace posted accounting support in `general_journal.csv`.
+
+### (c)(4) Indirect accumulation/allocation consistency
+- Use `indirect_rate_support.csv` to inspect pool/base/rate versions and approval state.
+- Use `applied_burden_summary.csv` to confirm burden application results.
+- Confirm manager approval trail in `manager_review_events.csv`.
+
+### (c)(5) General-ledger control
+- Use `general_journal.csv` for posted entry detail.
+- Use `trial_balance.csv` to confirm debit/credit-balanced reporting.
+
+### (c)(6) Subledger-to-GL reconciliation
+- Use `subledger_gl_tieout.csv` for labor/expense/burden tie-out status.
+- Use `billed_to_booked_reconciliation.csv` for billing/booked reconciliation support.
+
+### (c)(7) Adjusting-entry approvals/documentation
+- Use `adjusting_je_packet.csv` for lifecycle evidence (request/approve/post/reversal linkage).
+- Use `manager_review_events.csv` and `audit_trail.csv` for approval and reason trail.
+
+### (c)(8) Management reviews/internal audits
+- Use `manager_review_events.csv` as evidence of manager review checkpoints.
+- Use `audit_trail.csv` to trace review-related actions over the period.
+- Note to auditor: no standalone internal-audit attestation artifact exists yet.
+
+### (c)(9) Timekeeping by cost objective
+- Use `timesheets_packet.csv` for timesheet lifecycle and ownership.
+- Use `timesheet_compliance.csv` for policy/entry discipline indicators.
+
+### (c)(10) Labor distribution to correct objectives
+- Use `labor_distribution.csv` for objective-level distribution output.
+- Use `subledger_gl_tieout.csv` to confirm downstream GL alignment.
+
+### (c)(11) Monthly routine posting / close cadence
+- Use `monthly_close_compliance.csv` (or `.json`) as primary cadence evidence.
+- Validate overdue indicators (`IsOverdue`, `DaysPastCloseDeadline`) and posting activity (`JournalEntryCount`).
+- Corroborate escalation/review events in `manager_review_events.csv` and supporting chronology in `audit_trail.csv`.
+- Optional on-demand export: `/api/reports/monthly-close-compliance?format=csv&closeGraceDays=10`.
+
+### (c)(12) FAR Part 31 unallowables exclusion/segregation
+- Use `unallowable_costs.csv` (or `.json`) as the unallowables register.
+- Confirm `ExcludedFromBilling=true` and inspect `ExclusionBasis` for each row.
+- Cross-check `invoice_lines.csv` and `billed_to_booked_reconciliation.csv` to verify exclusion from billed costs.
+
+### (c)(13) CLIN/unit-level identification
+- Use `clin_summary.csv` to show contract/task-order/CLIN/WBS/charge-code rollups.
+- Confirm CLIN-aware objective mapping from row identifiers.
+
+### (c)(14) Preproduction vs production segregation
+- No current artifact; requirement is planned.
+- Auditor should review roadmap/gap documentation in this section and remediation plan.
+
+### (c)(15) Limitation-clause info and indirect-rate computation
+- Use `indirect_rate_support.csv` for rate computation evidence from posted books.
+- Use `invoices.csv` and `billed_to_booked_reconciliation.csv` for ceiling/funded-limit enforcement outcomes.
+- Auditor note: clause-specific FAR notice workflow is not yet explicit.
+
+### (c)(16) Billings reconciled to cost accounts and terms
+- Use `invoices.csv` and `invoice_lines.csv` for billed amounts and composition.
+- Use `billed_cost_links.csv` to trace billed lines back to source costs.
+- Use `billed_to_booked_reconciliation.csv` for current/cumulative tie-out.
+
+### (c)(17) Reliable data for follow-on pricing
+- Use `labor_distribution.csv`, `project_summary.csv`, and `audit_trail.csv` as historical source-data evidence.
+- Use payroll reconciliation test evidence (`Payroll import reconciles to posted labor`) for data reliability context.
+- Auditor note: no dedicated proposal/BOE workflow artifact exists yet.
+
+### (c)(18) CAS/GAAP accounting practices
+- Use `general_journal.csv` and `trial_balance.csv` as primary ledger/financial-control evidence.
+- Use `audit_trail.csv` for control-change and adjustment traceability.
+- Auditor note: CAS-specific automated mapping/rules evidence is not currently implemented.
+
 ## Overall Summary
-- `Complete`: (2), (3), (4), (5), (6), (7), (9), (10), (11), (12), (13), (16)
-- `Partial`: (1), (8), (15), (17), (18)
-- `Absent`: (14)
-- `Planned`: none currently marked as planned-only; remediation for absent/partial items is identified in-section.
+- `Complete`: (2), (3), (4), (5), (6), (7), (9), (10), (12), (13), (16)
+- `Partial`: (1), (8), (11), (15), (17), (18)
+- `Planned`: (14)
+- `Absent`: none currently marked as absent-only.
