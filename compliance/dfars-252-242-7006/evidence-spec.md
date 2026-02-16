@@ -142,6 +142,78 @@ Required columns:
 - `Variance`
 - `Status`
 
+### `monthly_close_compliance.csv`
+Required columns:
+- `AccountingPeriodId`
+- `StartDate`
+- `EndDate`
+- `Status`
+- `CloseDeadline`
+- `DaysPastEnd`
+- `DaysPastCloseDeadline`
+- `JournalEntryCount`
+- `IsOverdue`
+
+### `internal_audit_compliance.csv`
+Required columns:
+- `InternalAuditCycleId`
+- `PeriodStart`
+- `PeriodEnd`
+- `DueDate`
+- `Status`
+- `DaysPastDue`
+- `IsOverdue`
+- `RequiredAttestations`
+- `ReceivedAttestations`
+- `AllChecklistStepsComplete`
+
+### `internal_audit_cycles.csv`
+Required columns:
+- `InternalAuditCycleId`
+- `AccountingPeriodId`
+- `PeriodStart`
+- `PeriodEnd`
+- `DueDate`
+- `Status`
+- `TieOutReviewCompleted`
+- `UnallowableReviewCompleted`
+- `BillingReviewCompleted`
+- `MonthlyCloseReviewCompleted`
+- `AttestationCount`
+- `SubmittedAtUtc`
+- `CompletedAtUtc`
+- `Summary`
+- `Notes`
+
+### `internal_audit_attestations.csv`
+Required columns:
+- `InternalAuditCycleId`
+- `AttestationId`
+- `AttestationType`
+- `AttestedByUserId`
+- `AttestedByRoles`
+- `AttestedAtUtc`
+- `Statement`
+- `Notes`
+
+### `unallowable_costs.csv`
+Required columns:
+- `SourceEntityType`
+- `SourceEntityId`
+- `TimesheetId`
+- `EntryDate`
+- `Employee`
+- `ChargeCode`
+- `ContractNumber`
+- `TaskOrderNumber`
+- `ClinNumber`
+- `WbsCode`
+- `CostType`
+- `AccountingCategory`
+- `Amount`
+- `ExcludedFromBilling`
+- `ExclusionBasis`
+
 ### `invoices.csv`
 Required columns:
 - `Id`
@@ -257,6 +329,11 @@ Required columns:
 - `trial_balance.csv`: GL balancing evidence for period.
 - `general_journal.csv`: Posted journal-line detail by account.
 - `subledger_gl_tieout.csv`: Reconciliation between subledgers and GL.
+- `monthly_close_compliance.csv`: Period-by-period close cadence evidence, overdue status, close deadline aging, and posting activity count.
+- `internal_audit_compliance.csv`: Periodic internal-audit compliance status including overdue posture and attestation completion.
+- `internal_audit_cycles.csv`: Internal-audit checklist lifecycle details from draft through completion.
+- `internal_audit_attestations.csv`: Explicit manager/compliance attestation records with statement and timestamps.
+- `unallowable_costs.csv`: Source-level unallowable register demonstrating segregation and explicit exclusion basis for billing/claims.
 - `invoices.csv`: Billing run outputs and invoice-level totals/status.
 - `invoice_lines.csv`: Line-level bill composition by cost objective and cost element.
 - `billed_cost_links.csv`: Traceability from billed line to source cost records.
@@ -276,6 +353,11 @@ A package is compliant with this spec when:
   - `general_journal.csv`
   - `trial_balance.csv`
   - `subledger_gl_tieout.csv`
+  - `monthly_close_compliance.csv`
+  - `internal_audit_compliance.csv`
+  - `internal_audit_cycles.csv`
+  - `internal_audit_attestations.csv`
+  - `unallowable_costs.csv`
   - `indirect_rate_support.csv`
   - `invoices.csv`
   - `adjusting_je_packet.csv`
@@ -283,4 +365,3 @@ A package is compliant with this spec when:
   - `trial_balance.csv`: debits equal credits in aggregate.
   - `billed_to_booked_reconciliation.csv`: variance/status reflects billed vs booked logic.
   - `timesheets_packet.csv` and `timesheet_compliance.csv` align on timesheet counts and compliance signals.
-
