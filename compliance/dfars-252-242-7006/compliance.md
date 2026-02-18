@@ -8,10 +8,18 @@ Evidence output root: `GovConMoney.Tests/Runner/AuditBinderOutput/<timestamp_gui
 ## Management Review Update (2026-02-16)
 - Periodic internal audit and attestation workflow is now implemented as part of management review controls.
 - Required attestations (manager/compliance) are policy-driven via `ManagementReviewPolicy`.
+- Review lifecycle now supports explicit stages: `Draft -> PendingAttestation -> Submitted -> Approved -> Closed`.
+- Checklist failures generate tracked compliance exceptions.
+- Close is blocked when exceptions are open; manager can resolve or accept risk before close.
+- Maker-checker is enforced for review approval (approver cannot be submitter).
 - New evidence artifacts:
   - `internal_audit_compliance.csv`
   - `internal_audit_cycles.csv`
   - `internal_audit_attestations.csv`
+  - `compliance_review_summary.csv`
+  - `compliance_review_checklist.csv`
+  - `compliance_exceptions.csv`
+  - `compliance_attestations.csv`
 - Clause `(8)` status is `Complete` based on implemented workflow + passing tests.
 
 ## (1) A sound internal control environment, accounting framework, and organizational structure
@@ -191,13 +199,20 @@ How it works
 - Periodic internal audit cycles are generated per accounting period and tracked to completion.
 - Checklist completion is required before cycle submission for attestation.
 - Manager and compliance attestations are captured as explicit records and can be configured by policy.
-- Cycle completion is blocked until required attestations are recorded.
+- Review submission requires checklist results and attestation evidence.
+- Manager approval uses maker-checker controls (submitter cannot approve).
+- Failed checklist items generate exceptions with remediation ownership and due dates.
+- Review close is blocked while exceptions remain open; manager risk-acceptance is supported.
 - Audit trail search and export are available.
 - Manager review events are captured for evidence packages.
 
 Validation tests
 - `Internal audit cycle requires checklist and attestations before completion`
 - `Internal audit compliance report flags overdue incomplete cycles`
+- `Compliance review requires attestation before submit`
+- `Approver cannot be submitter (maker-checker enforced)`
+- `Failed checklist item generates exception`
+- `Review cannot close with open exceptions unless accepted risk by manager`
 - `Period close requires manager role`
 - `Final indirect rates require manager approval before apply`
 - `Billing threshold routes approval to manager for high-value runs`
@@ -206,6 +221,10 @@ Evidence output
 - `internal_audit_compliance.csv`
 - `internal_audit_cycles.csv`
 - `internal_audit_attestations.csv`
+- `compliance_review_summary.csv`
+- `compliance_review_checklist.csv`
+- `compliance_exceptions.csv`
+- `compliance_attestations.csv`
 - `manager_review_events.csv`
 - `audit_trail.csv`
 
@@ -485,6 +504,10 @@ Human policy engagement
 - Use `internal_audit_compliance.csv` to identify cycle status, overdue posture, and attestation completion.
 - Use `internal_audit_cycles.csv` for checklist completion, submission, and close-out details by period.
 - Use `internal_audit_attestations.csv` for explicit manager/compliance attestation records.
+- Use `compliance_review_summary.csv` as the management-review lifecycle register.
+- Use `compliance_review_checklist.csv` for clause-by-clause review results.
+- Use `compliance_exceptions.csv` for open/resolved/accepted-risk exceptions and ownership.
+- Use `compliance_attestations.csv` for attestation records aligned to review periods.
 - Use `manager_review_events.csv` and `audit_trail.csv` to cross-verify lifecycle actions.
 
 ### (c)(9) Timekeeping by cost objective

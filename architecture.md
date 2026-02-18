@@ -17,7 +17,7 @@ Primary goals:
 Management review architecture update:
 - Management-review controls now include a periodic internal-audit and attestation subsystem.
 - Policy configuration governs cadence, due window, and required attestation roles.
-- Completion is workflow-gated until required attestations are recorded.
+- Workflow now includes checklist scoring, exception tracking, maker-checker approval, and controlled close.
 
 ## 2. Runtime Topology
 
@@ -126,11 +126,14 @@ Hardening controls:
 
 ### 6.5 Periodic Internal Audit and Attestation
 1. Internal audit cycles are synchronized from accounting periods.
-2. Checklist steps (tie-out, unallowables, billing, monthly close) are recorded on each cycle.
-3. Cycle is submitted for attestation after checklist completion.
-4. Manager and compliance attestations are captured as explicit records (policy-driven requirements).
-5. Cycle completion is manager-gated until required attestations are present.
-6. Compliance report tracks overdue cycles and attestation completeness.
+2. Clause checklist items are auto-seeded and scored (`Pass/Fail/NA`) per review period.
+3. Failed checklist items open tracked compliance exceptions with owner/due date.
+4. Cycle is submitted for attestation after checklist completion.
+5. Attestation records are captured explicitly (manager/compliance roles).
+6. Review submission requires checklist evidence and at least one attestation.
+7. Manager approval enforces maker-checker (submitter cannot approve).
+8. Review close is blocked while exceptions are open, unless manager resolves or accepts risk.
+9. Compliance report tracks overdue cycles, attestation completion, and open exceptions.
 
 This supports DFARS 252.242-7006(c)(11) routine posting and interim cost determination.
 
@@ -160,6 +163,10 @@ Current binder artifacts include:
 - `internal_audit_compliance`
 - `internal_audit_cycles`
 - `internal_audit_attestations`
+- `compliance_review_summary`
+- `compliance_review_checklist`
+- `compliance_exceptions`
+- `compliance_attestations`
 - `unallowable_costs`
 - `invoices`
 - `invoice_lines`
