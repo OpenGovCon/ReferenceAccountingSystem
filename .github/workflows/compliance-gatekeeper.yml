@@ -102,11 +102,20 @@ jobs:
           echo "OK: All required evidence files present."
 
       - name: Upload evidence binder artifact (PR debugging)
-        if: always()
+        if: always() && env.BINDER_PATH != ''
         uses: actions/upload-artifact@v4
         with:
           name: audit-binder
           path: ${{ env.BINDER_PATH }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload evidence binder root (fallback)
+        if: always() && env.BINDER_PATH == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-binder-root
+          path: engine-core/GovConMoney.Tests/Runner/AuditBinderOutput
           if-no-files-found: warn
           retention-days: 14
 
