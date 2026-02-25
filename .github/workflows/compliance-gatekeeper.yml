@@ -32,16 +32,29 @@ jobs:
         run: dotnet build engine-core/GovConMoney.slnx -c Release --no-restore
 
       - name: Generate compliance evidence binder
-        run: dotnet run -c Release --project engine-core/GovConMoney.Tests/GovConMoney.Tests.csproj
+        working-directory: engine-core
+        run: dotnet run -c Release --project GovConMoney.Tests/GovConMoney.Tests.csproj
 
       - name: Verify binder artifacts exist
         shell: bash
         run: |
           set -euo pipefail
 
-          ROOT="engine-core/GovConMoney.Tests/Runner/AuditBinderOutput"
+          ROOT=""
+          CANDIDATE_ROOTS=(
+            "engine-core/GovConMoney.Tests/Runner/AuditBinderOutput"
+            "GovConMoney.Tests/Runner/AuditBinderOutput"
+          )
+          for candidate in "${CANDIDATE_ROOTS[@]}"; do
+            if [ -d "$candidate" ]; then
+              ROOT="$candidate"
+              break
+            fi
+          done
+
           if [ ! -d "$ROOT" ]; then
-            echo "ERROR: Evidence root not found: $ROOT"
+            echo "ERROR: Evidence root not found in expected locations:"
+            printf ' - %s\n' "${CANDIDATE_ROOTS[@]}"
             exit 1
           fi
 
@@ -115,7 +128,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: audit-binder-root
-          path: engine-core/GovConMoney.Tests/Runner/AuditBinderOutput
+          path: |
+            engine-core/GovConMoney.Tests/Runner/AuditBinderOutput
+            GovConMoney.Tests/Runner/AuditBinderOutput
           if-no-files-found: warn
           retention-days: 14
 
