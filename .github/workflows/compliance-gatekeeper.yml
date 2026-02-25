@@ -1,0 +1,120 @@
+name: compliance-gatekeeper
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  compliance:
+    name: Build + Tests + Compliance Evidence Binder
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore engine-core/GovConMoney.slnx
+
+      - name: Build (Release)
+        run: dotnet build engine-core/GovConMoney.slnx -c Release --no-restore
+
+      - name: Generate compliance evidence binder
+        run: dotnet run -c Release --project engine-core/GovConMoney.Tests/GovConMoney.Tests.csproj
+
+      - name: Verify binder artifacts exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="engine-core/GovConMoney.Tests/Runner/AuditBinderOutput"
+          if [ ! -d "$ROOT" ]; then
+            echo "ERROR: Evidence root not found: $ROOT"
+            exit 1
+          fi
+
+          # Find newest binder folder (by modified time)
+          NEW_BINDER="$(ls -1dt "$ROOT"/*/ 2>/dev/null | head -n 1 || true)"
+          if [ -z "${NEW_BINDER}" ]; then
+            echo "ERROR: No binder folder found under $ROOT"
+            exit 1
+          fi
+
+          echo "Newest binder folder: $NEW_BINDER"
+          echo "BINDER_PATH=$NEW_BINDER" >> $GITHUB_ENV
+
+          required_files=(
+            "audit_trail.csv"
+            "manager_review_events.csv"
+            "timesheet_compliance.csv"
+            "labor_distribution.csv"
+            "project_summary.csv"
+            "clin_summary.csv"
+            "indirect_rate_support.csv"
+            "applied_burden_summary.csv"
+            "general_journal.csv"
+            "trial_balance.csv"
+            "subledger_gl_tieout.csv"
+            "monthly_close_compliance.csv"
+            "internal_audit_compliance.csv"
+            "internal_audit_cycles.csv"
+            "internal_audit_attestations.csv"
+            "compliance_review_summary.csv"
+            "compliance_review_checklist.csv"
+            "compliance_exceptions.csv"
+            "compliance_attestations.csv"
+            "unallowable_costs.csv"
+            "invoices.csv"
+            "invoice_lines.csv"
+            "billed_cost_links.csv"
+            "billed_to_booked_reconciliation.csv"
+            "adjusting_je_packet.csv"
+          )
+
+          missing=0
+          for f in "${required_files[@]}"; do
+            if [ ! -f "${NEW_BINDER}${f}" ]; then
+              echo "MISSING: ${f}"
+              missing=1
+            fi
+          done
+
+          if [ $missing -ne 0 ]; then
+            echo ""
+            echo "ERROR: One or more required evidence files are missing."
+            echo "Folder contents:"
+            ls -la "$NEW_BINDER"
+            exit 1
+          fi
+
+          echo "OK: All required evidence files present."
+
+      - name: Upload evidence binder artifact (PR debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-binder
+          path: ${{ env.BINDER_PATH }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload test results (TRX)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "engine-core/**/TestResults/*.trx"
+          if-no-files-found: warn
+          retention-days: 14
