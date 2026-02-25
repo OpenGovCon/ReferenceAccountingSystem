@@ -1,0 +1,88 @@
+@page "/accountant/reports/trial-balance"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.CloseService Close
+
+<h3>Accountant - Trial Balance</h3>
+<p>Period trial balance with CSV/JSON export.</p>
+
+<form method="get" action="/accountant/reports/trial-balance" class="row g-2 align-items-end">
+    <div class="col-auto">
+        <label class="form-label">Period Start</label>
+        <input class="form-control" type="date" name="periodStart" value="@periodStartString" required />
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Period End</label>
+        <input class="form-control" type="date" name="periodEnd" value="@periodEndString" required />
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-outline-secondary" type="submit">Run</button>
+    </div>
+</form>
+
+@if (periodStart.HasValue && periodEnd.HasValue)
+{
+    <p class="mt-3">
+        API Export:
+        <a href="@JsonLink()" target="_blank">JSON</a> |
+        <a href="@CsvLink()" target="_blank">CSV</a>
+    </p>
+}
+
+<p class="mt-2">
+    <strong>Total Debit:</strong> @totalDebit
+    <span class="ms-3"><strong>Total Credit:</strong> @totalCredit</span>
+    @if (isBalanced)
+    {
+        <span class="ms-3 text-success"><strong>Status:</strong> Balanced</span>
+    }
+    else
+    {
+        <span class="ms-3 text-danger"><strong>Status:</strong> Out of Balance</span>
+    }
+</p>
+
+<table class="table">
+    <thead><tr><th>Account</th><th>Name</th><th>Debit</th><th>Credit</th><th>Net</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.AccountNumber</td>
+            <td>@row.AccountName</td>
+            <td>@row.Debit</td>
+            <td>@row.Credit</td>
+            <td>@row.Net</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public DateOnly? periodStart { get; set; }
+    [SupplyParameterFromQuery] public DateOnly? periodEnd { get; set; }
+
+    private IReadOnlyList<GovConMoney.Application.Models.TrialBalanceRow> rows = [];
+    private decimal totalDebit;
+    private decimal totalCredit;
+    private bool isBalanced;
+    private string? periodStartString => periodStart?.ToString("yyyy-MM-dd");
+    private string? periodEndString => periodEnd?.ToString("yyyy-MM-dd");
+
+    protected override void OnParametersSet()
+    {
+        rows = [];
+        if (periodStart.HasValue && periodEnd.HasValue)
+        {
+            rows = Close.TrialBalance(periodStart.Value, periodEnd.Value);
+        }
+
+        totalDebit = rows.Sum(x => x.Debit);
+        totalCredit = rows.Sum(x => x.Credit);
+        isBalanced = Math.Round(totalDebit, 2) == Math.Round(totalCredit, 2);
+    }
+
+    private string JsonLink()
+        => $"/api/reports/trial-balance?format=json&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+
+    private string CsvLink() => JsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+}

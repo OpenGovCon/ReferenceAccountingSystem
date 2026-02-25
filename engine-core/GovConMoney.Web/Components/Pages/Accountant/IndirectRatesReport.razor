@@ -1,0 +1,261 @@
+@page "/accountant/reports/indirect"
+@attribute [Authorize(Policy = "RequireManagerOrAccountant")]
+@inject GovConMoney.Application.Services.IndirectRateService Indirect
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+@inject NavigationManager Nav
+
+<h3>Accountant - Indirect Rates & Burden</h3>
+<p>Compute support rates, apply burden to posted labor, and run rerating adjustments.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (computed.HasValue)
+{
+    <div class="alert alert-success">Computed rate records: @computed.Value</div>
+}
+@if (submitted.HasValue)
+{
+    <div class="alert alert-success">Final rate submitted for manager review.</div>
+}
+@if (applied.HasValue)
+{
+    <div class="alert alert-success">Applied burden entries: @applied.Value</div>
+}
+@if (rerated.HasValue)
+{
+    <div class="alert alert-success">Rerate adjustment entries: @rerated.Value</div>
+}
+@if (managerApproved.HasValue)
+{
+    <div class="alert alert-success">Manager approved final indirect rate.</div>
+}
+@if (managerRejected.HasValue)
+{
+    <div class="alert alert-warning">Manager rejected final indirect rate.</div>
+}
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Compute Rates</h5>
+            <form method="post" action="/api/accountant/indirect/compute-form" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Period Start</label>
+                    <input class="form-control" type="date" name="periodStart" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Period End</label>
+                    <input class="form-control" type="date" name="periodEnd" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Rate Type</label>
+                    <select class="form-select" name="isFinal">
+                        <option value="false" selected>Provisional</option>
+                        <option value="true">Final (Manager Approval Required)</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-primary" type="submit">Compute</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Apply Burden</h5>
+            <form method="post" action="/api/accountant/indirect/apply-form" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Period Start</label>
+                    <input class="form-control" type="date" name="periodStart" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Period End</label>
+                    <input class="form-control" type="date" name="periodEnd" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Pool (optional)</label>
+                    <select class="form-select" name="indirectPoolId">
+                        <option value="">All pools</option>
+                        @foreach (var pool in pools.OrderBy(x => x.Name))
+                        {
+                            <option value="@pool.Id">@pool.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Post To GL</label>
+                    <select class="form-select" name="postToGeneralLedger">
+                        <option value="true" selected>Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-primary" type="submit">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Rerate (Delta)</h5>
+            <form method="post" action="/api/accountant/indirect/rerate-form" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Period Start</label>
+                    <input class="form-control" type="date" name="periodStart" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Period End</label>
+                    <input class="form-control" type="date" name="periodEnd" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Pool</label>
+                    <select class="form-select" name="indirectPoolId" required>
+                        @foreach (var pool in pools.OrderBy(x => x.Name))
+                        {
+                            <option value="@pool.Id">@pool.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">New Rate</label>
+                    <input class="form-control" type="number" step="0.000001" name="newRate" required />
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Rate Type</label>
+                    <select class="form-select" name="isFinal">
+                        <option value="true" selected>Final (Manager Approval Required)</option>
+                        <option value="false">Provisional</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Post To GL</label>
+                    <select class="form-select" name="postToGeneralLedger">
+                        <option value="true" selected>Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-warning" type="submit">Rerate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<p>
+    API Export:
+    <a href="/api/reports/indirect-rates?format=json" target="_blank">Rates JSON</a> |
+    <a href="/api/reports/indirect-rates?format=csv" target="_blank">Rates CSV</a> |
+    <a href="/api/reports/indirect-burdens?format=json" target="_blank">Burden JSON</a> |
+    <a href="/api/reports/indirect-burdens?format=csv" target="_blank">Burden CSV</a>
+</p>
+
+<h5>Rate Support</h5>
+<table class="table">
+    <thead><tr><th>Pool</th><th>Period</th><th>Pool Cost</th><th>Base Total</th><th>Rate</th><th>Version</th><th>Type</th><th>Review</th><th>Actions</th></tr></thead>
+    <tbody>
+    @foreach (var row in rates.Take(100))
+    {
+        <tr>
+            <td>@row.PoolName</td>
+            <td>@row.PeriodStart - @row.PeriodEnd</td>
+            <td>@row.PoolCost</td>
+            <td>@row.AllocationBaseTotal</td>
+            <td>@row.Rate</td>
+            <td>@row.Version</td>
+            <td>@(row.IsFinal ? "Final" : "Provisional")</td>
+            <td>
+                @row.ReviewStatus
+                @if (!string.IsNullOrWhiteSpace(row.ReviewNote))
+                {
+                    <div class="small text-muted">@row.ReviewNote</div>
+                }
+            </td>
+            <td>
+                <AuthorizeView Roles="Accountant">
+                    @if (row.IsFinal && row.ReviewStatus != GovConMoney.Domain.Enums.RateCalculationReviewStatus.PendingManagerApproval && row.ReviewStatus != GovConMoney.Domain.Enums.RateCalculationReviewStatus.Approved)
+                    {
+                        <form method="post" action="/api/accountant/indirect/submit-final-form" class="d-flex gap-1 align-items-center">
+                            <input type="hidden" name="rateCalculationId" value="@row.RateCalculationId" />
+                            <input class="form-control form-control-sm" name="reason" placeholder="submission note" />
+                            <button class="btn btn-sm btn-outline-primary" type="submit">Submit</button>
+                        </form>
+                    }
+                </AuthorizeView>
+                <AuthorizeView Roles="Manager">
+                    @if (row.IsFinal && row.ReviewStatus == GovConMoney.Domain.Enums.RateCalculationReviewStatus.PendingManagerApproval)
+                    {
+                        <form method="post" action="/api/manager/indirect/approve-form" class="d-flex gap-1 mb-1 align-items-center">
+                            <input type="hidden" name="rateCalculationId" value="@row.RateCalculationId" />
+                            <input class="form-control form-control-sm" name="reason" value="Manager approval." />
+                            <button class="btn btn-sm btn-success" type="submit">Approve</button>
+                        </form>
+                        <form method="post" action="/api/manager/indirect/reject-form" class="d-flex gap-1 align-items-center">
+                            <input type="hidden" name="rateCalculationId" value="@row.RateCalculationId" />
+                            <input class="form-control form-control-sm" name="reason" placeholder="rejection reason" required />
+                            <button class="btn btn-sm btn-outline-danger" type="submit">Reject</button>
+                        </form>
+                    }
+                </AuthorizeView>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h5>Applied Burden Summary</h5>
+<table class="table">
+    <thead><tr><th>Pool</th><th>Period</th><th>Entries</th><th>Base</th><th>Burden</th><th>Rate</th><th>Adj</th><th>Posted</th></tr></thead>
+    <tbody>
+    @foreach (var row in burdens.Take(100))
+    {
+        <tr>
+            <td>@row.PoolName</td>
+            <td>@row.PeriodStart - @row.PeriodEnd</td>
+            <td>@row.EntryCount</td>
+            <td>@row.BaseAmountTotal</td>
+            <td>@row.BurdenAmountTotal</td>
+            <td>@row.Rate</td>
+            <td>@(row.IsAdjustment ? "Yes" : "No")</td>
+            <td>@(row.PostedToGeneralLedger ? "Yes" : "No")</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private IReadOnlyList<GovConMoney.Application.Models.IndirectRateSupportRow> rates = [];
+    private IReadOnlyList<GovConMoney.Application.Models.AppliedBurdenSummaryRow> burdens = [];
+    private List<GovConMoney.Domain.Entities.IndirectPool> pools = [];
+    private string? error;
+    private int? computed;
+    private int? submitted;
+    private int? applied;
+    private int? rerated;
+    private int? managerApproved;
+    private int? managerRejected;
+
+    protected override void OnParametersSet()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Nav.ToAbsoluteUri(Nav.Uri).Query);
+        error = query.TryGetValue("error", out var err) ? err.ToString() : null;
+        computed = query.TryGetValue("computed", out var c) && int.TryParse(c, out var cv) ? cv : null;
+        submitted = query.TryGetValue("submitted", out var s) && int.TryParse(s, out var sv) ? sv : null;
+        applied = query.TryGetValue("applied", out var a) && int.TryParse(a, out var av) ? av : null;
+        rerated = query.TryGetValue("rerated", out var r) && int.TryParse(r, out var rv) ? rv : null;
+        managerApproved = query.TryGetValue("managerApproved", out var m) && int.TryParse(m, out var mv) ? mv : null;
+        managerRejected = query.TryGetValue("managerRejected", out var mr) && int.TryParse(mr, out var mrv) ? mrv : null;
+
+        rates = Indirect.RateSupport(null, null);
+        burdens = Indirect.BurdenSummary(null, null);
+        pools = Store.IndirectPools.Where(x => x.IsActive).OrderBy(x => x.Name).ToList();
+    }
+}

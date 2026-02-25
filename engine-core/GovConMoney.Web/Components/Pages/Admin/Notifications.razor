@@ -1,0 +1,157 @@
+@page "/admin/notifications"
+@attribute [Authorize(Roles = "Admin")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@inject NotificationService NotificationsService
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+
+<h3>Admin - Notifications</h3>
+<p>Send tenant, role-based, or individual user notifications.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<form @onsubmit="SendAsync" @onsubmit:preventDefault="true" class="mb-3">
+    <label>Target</label>
+    <select class="form-select mb-1" @bind="targetType">
+        <option value="Tenant">Tenant (All Users)</option>
+        <option value="Role">Role</option>
+        <option value="User">User</option>
+    </select>
+
+    @if (targetType == "Role")
+    {
+        <label>Role</label>
+        <select class="form-select mb-1" @bind="targetRole">
+            @foreach (var role in roles)
+            {
+                <option value="@role">@role</option>
+            }
+        </select>
+    }
+    else if (targetType == "User")
+    {
+        <label>User</label>
+        <select class="form-select mb-1" @bind="targetUserId">
+            @foreach (var user in users)
+            {
+                <option value="@user.Id">@user.UserName</option>
+            }
+        </select>
+    }
+
+    <label>Category</label>
+    <input class="form-control mb-1" @bind="category" />
+    <label>Title</label>
+    <input class="form-control mb-1" @bind="title" />
+    <label>Message</label>
+    <textarea class="form-control mb-2" rows="3" @bind="body"></textarea>
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Send Notification</button>
+</form>
+
+<h5>Recent Notifications</h5>
+<table class="table table-sm">
+    <thead><tr><th>When</th><th>Category</th><th>Title</th><th>Target</th></tr></thead>
+    <tbody>
+    @foreach (var n in recent)
+    {
+        <tr>
+            <td>@n.CreatedAtUtc</td>
+            <td>@n.Category</td>
+            <td>@n.Title</td>
+            <td>@TargetText(n)</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private readonly List<string> roles = ["Admin", "Compliance", "TimeReporter", "Supervisor", "Accountant"];
+    private List<AppUser> users = [];
+    private List<UserNotification> recent = [];
+    private string targetType = "Tenant";
+    private string targetRole = "TimeReporter";
+    private Guid targetUserId;
+    private string category = "General";
+    private string title = string.Empty;
+    private string body = string.Empty;
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var tenantId = TenantContext.TenantId;
+        users = Repository.Query<AppUser>(tenantId).OrderBy(x => x.UserName).ToList();
+        targetUserId = users.FirstOrDefault()?.Id ?? Guid.Empty;
+        recent = Repository.Query<UserNotification>(tenantId).OrderByDescending(x => x.CreatedAtUtc).Take(30).ToList();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SendAsync()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(body))
+            {
+                throw new InvalidOperationException("Title and message are required.");
+            }
+
+            if (targetType == "Role")
+            {
+                NotificationsService.SendToRole(targetRole, title, body, category);
+            }
+            else if (targetType == "User")
+            {
+                NotificationsService.SendToUser(targetUserId, title, body, category);
+            }
+            else
+            {
+                NotificationsService.SendToTenant(title, body, category);
+            }
+
+            title = string.Empty;
+            body = string.Empty;
+            message = "Notification sent.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private static string TargetText(UserNotification notification)
+    {
+        if (notification.TargetUserId.HasValue)
+        {
+            return $"User: {notification.TargetUserId}";
+        }
+        if (!string.IsNullOrWhiteSpace(notification.TargetRole))
+        {
+            return $"Role: {notification.TargetRole}";
+        }
+        return "Tenant";
+    }
+}

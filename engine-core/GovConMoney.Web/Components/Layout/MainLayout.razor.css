@@ -1,0 +1,55 @@
+.shell {
+    min-height: 100vh;
+    background: linear-gradient(180deg, #f7fafc 0%, #eef2f7 100%);
+}
+
+.content {
+    max-width: 1200px;
+}
+
+.app-breadcrumb {
+    background: #f2f6ea;
+    border: 1px solid #d4ddc5;
+    border-radius: 8px;
+    padding: 0.45rem 0.7rem;
+}
+
+.app-breadcrumb .breadcrumb-item,
+.app-breadcrumb .breadcrumb-item.active {
+    color: #2f4a35;
+    font-size: 0.92rem;
+}
+
+.app-breadcrumb .breadcrumb-item + .breadcrumb-item::before {
+    color: #6f826e;
+}
+
+.app-breadcrumb .breadcrumb-item a {
+    color: #2f4a35;
+    text-decoration: none;
+}
+
+.app-breadcrumb .breadcrumb-item a:hover {
+    text-decoration: underline;
+}
+
+#blazor-error-ui {
+    color-scheme: light only;
+    background: #fff3cd;
+    border-top: 1px solid #e6d8a0;
+    bottom: 0;
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}

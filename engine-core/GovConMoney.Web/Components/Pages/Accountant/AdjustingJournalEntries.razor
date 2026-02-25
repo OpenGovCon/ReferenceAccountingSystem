@@ -1,0 +1,172 @@
+@page "/accountant/reports/adjusting-journal"
+@attribute [Authorize(Policy = "RequireManagerOrAccountant")]
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+@inject GovConMoney.Application.Abstractions.ITenantContext TenantContext
+
+<h3>Accountant - Adjusting Journal Entries</h3>
+<p>Create, submit, approve, post, and reverse adjusting entries with maker-checker controls.</p>
+@if (managementPolicy is not null)
+{
+    <p class="text-muted">
+        Manager co-sign threshold: @(managementPolicy.RequireManagerCoSignForAdjustingAboveThreshold ? managementPolicy.AdjustingManagerCoSignThreshold.ToString("0.00") : "Disabled")
+    </p>
+}
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <p class="text-danger">@error</p>
+}
+@if (created.HasValue || submitted.HasValue || approved.HasValue || posted.HasValue || reversed.HasValue)
+{
+    <p class="text-success">Adjusting journal workflow action completed.</p>
+}
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Create Adjusting Entry</h5>
+            <form method="post" action="/api/accountant/journal/adjusting/create-form" class="row g-2">
+            <div class="col-md-2">
+                <label class="form-label">Entry Date</label>
+                <input class="form-control" type="date" name="entryDate" value="@DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd")" required />
+            </div>
+            <div class="col-md-5">
+                <label class="form-label">Description</label>
+                <input class="form-control" type="text" name="description" placeholder="Month-end accrual adjustment" required />
+            </div>
+            <div class="col-md-5">
+                <label class="form-label">Reason / Documentation</label>
+                <input class="form-control" type="text" name="reason" placeholder="Explain why this entry is required" required />
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Attachment References</label>
+                <input class="form-control" type="text" name="attachmentRefs" placeholder="File IDs, ticket IDs, or reference notes" />
+            </div>
+
+            @for (var i = 0; i < 4; i++)
+            {
+                <div class="col-md-6 col-lg-4">
+                    <label class="form-label">Line @(i + 1) Account</label>
+                    <select class="form-select" name="lineAccountId">
+                        <option value="">Select account</option>
+                        @foreach (var account in accounts)
+                        {
+                            <option value="@account.Id">@account.AccountNumber - @account.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3 col-lg-2">
+                    <label class="form-label">Debit</label>
+                    <input class="form-control" type="number" step="0.01" min="0" name="lineDebit" />
+                </div>
+                <div class="col-md-3 col-lg-2">
+                    <label class="form-label">Credit</label>
+                    <input class="form-control" type="number" step="0.01" min="0" name="lineCredit" />
+                </div>
+            }
+
+                <div class="col-12">
+                    <button class="btn btn-primary" type="submit">Create Draft</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<p class="mb-2">
+    API Export:
+    <a href="/api/accountant/journal/adjusting" target="_blank">JSON</a>
+</p>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Entry</th>
+            <th>Status</th>
+            <th>Reason</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var entry in entries)
+        {
+            <tr>
+                <td>@entry.EntryDate</td>
+                <td>@entry.Description</td>
+                <td>@entry.Status</td>
+                <td>@entry.Reason</td>
+                <td>
+                    @if (entry.Status == GovConMoney.Domain.Enums.JournalEntryStatus.Draft)
+                    {
+                        <AuthorizeView Roles="Accountant">
+                            <form method="post" action="/api/accountant/journal/adjusting/submit-form" class="d-inline">
+                                <input type="hidden" name="journalEntryId" value="@entry.Id" />
+                                <input type="hidden" name="reason" value="Submitted for approval." />
+                                <button class="btn btn-sm btn-outline-primary" type="submit">Submit</button>
+                            </form>
+                        </AuthorizeView>
+                    }
+                    @if (entry.Status == GovConMoney.Domain.Enums.JournalEntryStatus.PendingApproval)
+                    {
+                        <AuthorizeView Roles="Manager,Accountant">
+                            <form method="post" action="/api/manager/journal/adjusting/approve-form" class="d-inline">
+                                <input type="hidden" name="journalEntryId" value="@entry.Id" />
+                                <input type="hidden" name="reason" value="Approved with supporting documentation." />
+                                <button class="btn btn-sm btn-outline-success" type="submit">Approve</button>
+                            </form>
+                        </AuthorizeView>
+                    }
+                    @if (entry.Status == GovConMoney.Domain.Enums.JournalEntryStatus.Approved)
+                    {
+                        <AuthorizeView Roles="Accountant">
+                            <form method="post" action="/api/accountant/journal/adjusting/post-form" class="d-inline">
+                                <input type="hidden" name="journalEntryId" value="@entry.Id" />
+                                <input type="hidden" name="reason" value="Post approved adjusting entry." />
+                                <button class="btn btn-sm btn-success" type="submit">Post</button>
+                            </form>
+                        </AuthorizeView>
+                    }
+                    @if (entry.Status == GovConMoney.Domain.Enums.JournalEntryStatus.Posted && !entry.IsReversal)
+                    {
+                        <AuthorizeView Roles="Accountant">
+                            <form method="post" action="/api/accountant/journal/adjusting/reverse-form" class="d-inline">
+                                <input type="hidden" name="journalEntryId" value="@entry.Id" />
+                                <input type="hidden" name="reason" value="Reversal requested by accounting." />
+                                <button class="btn btn-sm btn-outline-danger" type="submit">Reverse</button>
+                            </form>
+                        </AuthorizeView>
+                    }
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public string? error { get; set; }
+    [SupplyParameterFromQuery] public Guid? created { get; set; }
+    [SupplyParameterFromQuery] public int? submitted { get; set; }
+    [SupplyParameterFromQuery] public int? approved { get; set; }
+    [SupplyParameterFromQuery] public int? posted { get; set; }
+    [SupplyParameterFromQuery] public int? reversed { get; set; }
+
+    private List<GovConMoney.Domain.Entities.ChartOfAccount> accounts = [];
+    private List<GovConMoney.Domain.Entities.JournalEntry> entries = [];
+    private GovConMoney.Domain.Entities.ManagementReviewPolicy? managementPolicy;
+
+    protected override void OnParametersSet()
+    {
+        accounts = Store.ChartOfAccounts
+            .Where(x => x.TenantId == TenantContext.TenantId)
+            .OrderBy(x => x.AccountNumber)
+            .ToList();
+
+        entries = Store.JournalEntries
+            .Where(x => x.TenantId == TenantContext.TenantId && x.EntryType == GovConMoney.Domain.Enums.JournalEntryType.Adjusting)
+            .OrderByDescending(x => x.EntryDate)
+            .ThenByDescending(x => x.Id)
+            .ToList();
+        managementPolicy = Store.ManagementReviewPolicies.SingleOrDefault(x => x.TenantId == TenantContext.TenantId);
+    }
+}

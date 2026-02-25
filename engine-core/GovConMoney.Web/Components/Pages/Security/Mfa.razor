@@ -1,0 +1,15 @@
+@page "/auth/mfa"
+
+<h3>Multi-factor verification</h3>
+
+<p>Enter the 6-digit authenticator code to complete sign-in.</p>
+
+<form method="post" action="/api/login-mfa-form">
+    <label>Authenticator Code</label>
+    <input class="form-control" name="code" autocomplete="one-time-code" />
+    <div class="form-check mt-2">
+        <input class="form-check-input" id="rememberMachine" type="checkbox" name="rememberMachine" value="true" />
+        <label class="form-check-label" for="rememberMachine">Remember this device</label>
+    </div>
+    <button class="btn btn-primary mt-2" type="submit">Verify</button>
+</form>

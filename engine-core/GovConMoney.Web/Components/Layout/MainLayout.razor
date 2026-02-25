@@ -1,0 +1,116 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Navigation
+
+<div class="shell">
+    <NavMenu />
+
+    <main class="content container-fluid py-4">
+        @if (breadcrumbs.Count > 0)
+        {
+            <nav aria-label="breadcrumb" class="app-breadcrumb mb-3">
+                <ol class="breadcrumb mb-0">
+                    @for (var i = 0; i < breadcrumbs.Count; i++)
+                    {
+                        var crumb = breadcrumbs[i];
+                        var isLast = i == breadcrumbs.Count - 1;
+                        if (isLast)
+                        {
+                            <li class="breadcrumb-item active" aria-current="page">@crumb.Label</li>
+                        }
+                        else
+                        {
+                            <li class="breadcrumb-item"><a href="@crumb.Href">@crumb.Label</a></li>
+                        }
+                    }
+                </ol>
+            </nav>
+        }
+
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">x</span>
+</div>
+
+@code {
+    private readonly List<BreadcrumbItem> breadcrumbs = [];
+
+    protected override void OnInitialized()
+    {
+        BuildBreadcrumbs();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        BuildBreadcrumbs();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void BuildBreadcrumbs()
+    {
+        breadcrumbs.Clear();
+
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var queryIndex = relative.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            relative = relative[..queryIndex];
+        }
+
+        var parts = relative
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        if (parts.Count == 0)
+        {
+            breadcrumbs.Add(new BreadcrumbItem("Home", "/home"));
+            return;
+        }
+
+        breadcrumbs.Add(new BreadcrumbItem("Home", "/home"));
+        var path = string.Empty;
+        foreach (var part in parts)
+        {
+            path += "/" + part;
+            breadcrumbs.Add(new BreadcrumbItem(FormatLabel(part), ResolveBreadcrumbHref(path, part)));
+        }
+    }
+
+    private static string ResolveBreadcrumbHref(string currentPath, string segment)
+    {
+        return segment.ToLowerInvariant() switch
+        {
+            "security" => "/security/passkeys",
+            _ => currentPath
+        };
+    }
+
+    private static string FormatLabel(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return "Home";
+        }
+
+        var normalized = segment.Replace("-", " ").Replace("_", " ");
+        if (Guid.TryParse(normalized, out _))
+        {
+            return "Details";
+        }
+
+        return char.ToUpperInvariant(normalized[0]) + normalized[1..];
+    }
+
+    private sealed record BreadcrumbItem(string Label, string Href);
+}

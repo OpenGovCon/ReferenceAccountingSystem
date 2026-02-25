@@ -1,0 +1,131 @@
+@page "/auth/enroll"
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@using GovConMoney.Infrastructure.Persistence
+@inject InMemoryDataStore Store
+
+<h3>Self Enrollment</h3>
+<p>Enrollment requests require Admin approval before account activation.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+    <label>Tenant</label>
+    <select class="form-select" @bind="tenantIdText">
+        @foreach (var t in tenants)
+        {
+            <option value="@t.Id.ToString()">@t.Name</option>
+        }
+    </select>
+
+    <label class="mt-2">Username</label>
+    <input class="form-control" @bind="username" />
+
+    <label class="mt-2">Email</label>
+    <input class="form-control" @bind="email" />
+
+    <label class="mt-2">Requested Role</label>
+    <select class="form-select" @bind="requestedRole">
+        <option value="TimeReporter">TimeReporter</option>
+        <option value="Supervisor">Supervisor</option>
+        <option value="Accountant">Accountant</option>
+        <option value="Compliance">Compliance</option>
+        <option value="Manager">Manager</option>
+    </select>
+
+    <button class="btn btn-primary mt-2" type="submit" disabled="@isBusy">Submit Request</button>
+</form>
+
+@code {
+    private List<Tenant> tenants = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private string tenantIdText = string.Empty;
+    private string username = string.Empty;
+    private string email = string.Empty;
+    private string requestedRole = "TimeReporter";
+
+    protected override void OnInitialized()
+    {
+        tenants = Store.Tenants.OrderBy(x => x.Name).ToList();
+        tenantIdText = tenants.FirstOrDefault()?.Id.ToString() ?? string.Empty;
+    }
+
+    private Task SubmitAsync()
+    {
+        if (isBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            if (!Guid.TryParse(tenantIdText, out var tenantId) || !Store.Tenants.Any(x => x.Id == tenantId))
+            {
+                throw new InvalidOperationException("Invalid tenant.");
+            }
+
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(email))
+            {
+                throw new InvalidOperationException("Username and email are required.");
+            }
+
+            var normalizedUserName = username.Trim().ToUpperInvariant();
+            if (Store.Users.Any(x => x.TenantId == tenantId && x.UserName.ToUpper() == normalizedUserName))
+            {
+                throw new InvalidOperationException("A user with this username already exists.");
+            }
+
+            var enrollment = new EnrollmentRequest
+            {
+                TenantId = tenantId,
+                UserName = username.Trim(),
+                Email = email.Trim(),
+                RequestedRole = string.IsNullOrWhiteSpace(requestedRole) ? "TimeReporter" : requestedRole,
+                Status = EnrollmentStatus.Pending,
+                SubmittedAtUtc = DateTime.UtcNow
+            };
+            Store.EnrollmentRequests.Add(enrollment);
+            Store.AuditEvents.Add(new AuditEvent
+            {
+                TenantId = tenantId,
+                EntityType = "EnrollmentRequest",
+                EntityId = enrollment.Id,
+                EventType = EventType.EnrollmentRequested,
+                ActorUserId = Guid.Empty,
+                ActorRoles = "Anonymous",
+                OccurredAtUtc = DateTime.UtcNow,
+                AfterJson = System.Text.Json.JsonSerializer.Serialize(enrollment),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+            Store.SaveChanges();
+
+            username = string.Empty;
+            email = string.Empty;
+            requestedRole = "TimeReporter";
+            message = "Enrollment request submitted. An administrator must approve it before you can sign in.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+
+        return Task.CompletedTask;
+    }
+}

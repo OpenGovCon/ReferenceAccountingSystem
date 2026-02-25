@@ -1,0 +1,14 @@
+.mfa-card {
+    border: 1px solid #c8d5bc;
+    box-shadow: 0 10px 22px rgba(56, 77, 48, 0.08);
+    margin-bottom: 1rem;
+}
+
+.mfa-qr {
+    background: #ffffff;
+    border: 1px solid #d7e0cc;
+    border-radius: 8px;
+    height: 220px;
+    padding: 0.4rem;
+    width: 220px;
+}

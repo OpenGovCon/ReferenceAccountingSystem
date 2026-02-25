@@ -1,0 +1,115 @@
+@page "/notifications"
+@attribute [Authorize]
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@inject NotificationService NotificationsService
+
+<h3>Notifications</h3>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<div class="mb-2">
+    <button class="btn btn-sm btn-outline-primary" type="button" @onclick="ReloadAsync" disabled="@isBusy">Refresh</button>
+    <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="MarkAllReadAsync" disabled="@isBusy">Mark All Read</button>
+</div>
+
+<table class="table table-sm">
+    <thead><tr><th>When</th><th>Category</th><th>Title</th><th>Message</th><th></th></tr></thead>
+    <tbody>
+    @if (notifications.Count == 0)
+    {
+        <tr><td colspan="5">No unread notifications.</td></tr>
+    }
+    else
+    {
+        @foreach (var item in notifications)
+        {
+            <tr>
+                <td>@item.CreatedAtUtc</td>
+                <td>@item.Category</td>
+                <td>@item.Title</td>
+                <td>@item.Message</td>
+                <td><button class="btn btn-sm btn-outline-success" type="button" @onclick="() => MarkReadAsync(item.Id)" disabled="@isBusy">Mark Read</button></td>
+            </tr>
+        }
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<UserNotification> notifications = [];
+    private bool isBusy;
+    private string? error;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            notifications = NotificationsService.GetInbox(includeRead: false, take: 100).ToList();
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task MarkReadAsync(Guid notificationId)
+    {
+        if (isBusy) return;
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            NotificationsService.MarkRead(notificationId);
+            message = "Notification marked as read.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            NotificationsService.MarkAllRead();
+            message = "All notifications marked as read.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}

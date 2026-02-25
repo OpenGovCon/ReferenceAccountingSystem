@@ -1,0 +1,96 @@
+@page "/accountant/reports/journal"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.ReportingService Reporting
+
+<h3>Accountant - General Journal</h3>
+<p>Review posted ledger entries from approved time cards and approved expenses.</p>
+
+<form method="post" action="/api/accountant/ledger/post-form" class="mb-3">
+    <button class="btn btn-primary" type="submit">Post Approved Time Cards To Ledger</button>
+</form>
+
+@if (posted.HasValue)
+{
+    <p class="text-success">Posted entries this run: @posted.Value</p>
+}
+
+<form method="get" action="/accountant/reports/journal" class="row g-2 align-items-end">
+    <div class="col-auto">
+        <label class="form-label">From</label>
+        <input class="form-control" type="date" name="fromDate" value="@fromDateString" />
+    </div>
+    <div class="col-auto">
+        <label class="form-label">To</label>
+        <input class="form-control" type="date" name="toDate" value="@toDateString" />
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-outline-secondary" type="submit">Filter</button>
+    </div>
+</form>
+
+<p class="mt-3">
+    API Export:
+    <a href="@JsonLink()" target="_blank">JSON</a> |
+    <a href="@CsvLink()" target="_blank">CSV</a>
+</p>
+
+<p class="mt-2">
+    <strong>Total Debit:</strong> @totalDebit
+    <span class="ms-3"><strong>Total Credit:</strong> @totalCredit</span>
+    @if (isBalanced)
+    {
+        <span class="ms-3 text-success"><strong>Status:</strong> Balanced</span>
+    }
+    else
+    {
+        <span class="ms-3 text-danger"><strong>Status:</strong> Out of Balance</span>
+    }
+</p>
+
+<table class="table mt-2">
+    <thead><tr><th>Entry Date</th><th>Entry Id</th><th>Description</th><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.EntryDate</td>
+            <td>@row.JournalEntryId</td>
+            <td>@row.Description</td>
+            <td>@row.AccountNumber - @row.AccountName</td>
+            <td>@row.Debit</td>
+            <td>@row.Credit</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public DateOnly? fromDate { get; set; }
+    [SupplyParameterFromQuery] public DateOnly? toDate { get; set; }
+    [SupplyParameterFromQuery] public int? posted { get; set; }
+
+    private IReadOnlyList<GovConMoney.Application.Models.GeneralJournalRow> rows = [];
+    private decimal totalDebit;
+    private decimal totalCredit;
+    private bool isBalanced;
+    private string? fromDateString => fromDate?.ToString("yyyy-MM-dd");
+    private string? toDateString => toDate?.ToString("yyyy-MM-dd");
+
+    protected override void OnParametersSet()
+    {
+        rows = Reporting.GeneralJournal(fromDate, toDate);
+        totalDebit = rows.Sum(x => x.Debit);
+        totalCredit = rows.Sum(x => x.Credit);
+        isBalanced = Math.Round(totalDebit, 2) == Math.Round(totalCredit, 2);
+    }
+
+    private string JsonLink()
+    {
+        var url = "/api/reports/journal?format=json";
+        if (fromDate.HasValue) url += $"&fromDate={fromDate.Value:yyyy-MM-dd}";
+        if (toDate.HasValue) url += $"&toDate={toDate.Value:yyyy-MM-dd}";
+        return url;
+    }
+
+    private string CsvLink() => JsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+}

@@ -1,0 +1,191 @@
+@page "/accountant/reports/period-close"
+@attribute [Authorize(Policy = "RequireManagerOrAccountant")]
+@inject GovConMoney.Application.Services.CloseService Close
+@inject GovConMoney.Application.Services.MonthlyCloseComplianceService MonthlyClose
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+@inject NavigationManager Nav
+
+<h3>Accountant - Period Close</h3>
+<p>Run pre-close controls, subledger tie-outs, and close an accounting period.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (closed)
+{
+    <div class="alert alert-success">Accounting period closed successfully.</div>
+}
+@if (validated)
+{
+    <div class="alert @(failed == 0 ? "alert-success" : "alert-warning")">
+        Pre-close validation completed. Failed checks: @failed
+    </div>
+}
+@if (monthlyCloseRows.Any(x => x.IsOverdue))
+{
+    <div class="alert alert-warning">
+        Monthly close compliance warning: @monthlyCloseRows.Count(x => x.IsOverdue) open period(s) are past close deadline.
+        <a href="@MonthlyCloseComplianceCsvLink()" target="_blank">Export overdue detail</a>
+    </div>
+}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Pre-Close Validation</h5>
+        <form method="post" action="/api/accountant/period-close/validate-form" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label">Period Start</label>
+                <input class="form-control" type="date" name="periodStart" value="@periodStartString" required />
+            </div>
+            <div class="col-auto">
+                <label class="form-label">Period End</label>
+                <input class="form-control" type="date" name="periodEnd" value="@periodEndString" required />
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-primary" type="submit">Validate</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@if (periodStart.HasValue && periodEnd.HasValue)
+{
+    <p>
+        API Export:
+        <a href="@TieOutJsonLink()" target="_blank">Tie-Out JSON</a> |
+        <a href="@TieOutCsvLink()" target="_blank">Tie-Out CSV</a> |
+        <a href="@TrialBalanceJsonLink()" target="_blank">Trial Balance JSON</a> |
+        <a href="@TrialBalanceCsvLink()" target="_blank">Trial Balance CSV</a> |
+        <a href="@MonthlyCloseComplianceJsonLink()" target="_blank">Monthly Close JSON</a> |
+        <a href="@MonthlyCloseComplianceCsvLink()" target="_blank">Monthly Close CSV</a>
+    </p>
+}
+
+<h5>Validation Steps</h5>
+<table class="table">
+    <thead><tr><th>Step</th><th>Passed</th><th>Detail</th></tr></thead>
+    <tbody>
+    @foreach (var row in checks)
+    {
+        <tr class="@(row.Passed ? "table-success" : "table-warning")">
+            <td>@row.Step</td>
+            <td>@(row.Passed ? "Yes" : "No")</td>
+            <td>@row.Detail</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h5>Monthly Close Compliance</h5>
+<table class="table">
+    <thead><tr><th>Period</th><th>Status</th><th>Deadline</th><th>Days Past Deadline</th><th>Journal Entries</th><th>Overdue</th></tr></thead>
+    <tbody>
+    @foreach (var row in monthlyCloseRows.Take(24))
+    {
+        <tr class="@(row.IsOverdue ? "table-warning" : string.Empty)">
+            <td>@row.StartDate - @row.EndDate</td>
+            <td>@row.Status</td>
+            <td>@row.CloseDeadline</td>
+            <td>@row.DaysPastCloseDeadline</td>
+            <td>@row.JournalEntryCount</td>
+            <td>@(row.IsOverdue ? "Yes" : "No")</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h5>Subledger-to-GL Reconciliation</h5>
+<table class="table">
+    <thead><tr><th>Area</th><th>Subledger</th><th>GL</th><th>Variance</th><th>Status</th></tr></thead>
+    <tbody>
+    @foreach (var row in tieOuts)
+    {
+        <tr class="@(row.Status == "Matched" ? "table-success" : "table-danger")">
+            <td>@row.Area</td>
+            <td>@row.SubledgerAmount</td>
+            <td>@row.GlAmount</td>
+            <td>@row.Variance</td>
+            <td>@row.Status</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<AuthorizeView Roles="Manager">
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="card-title">Manager Close Sign-Off</h5>
+            <form method="post" action="/api/manager/period-close/close-form" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Accounting Period</label>
+                    <select class="form-select" name="accountingPeriodId" required>
+                        @foreach (var period in periods)
+                        {
+                            <option value="@period.Id">@period.StartDate - @period.EndDate (@period.Status)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">Notes</label>
+                    <input class="form-control" name="notes" />
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-danger" type="submit">Close Period</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+<AuthorizeView Roles="Accountant">
+    <p class="text-muted mt-3">Manager sign-off is required to close the accounting period after validation passes.</p>
+</AuthorizeView>
+
+@code {
+    [SupplyParameterFromQuery] public DateOnly? periodStart { get; set; }
+    [SupplyParameterFromQuery] public DateOnly? periodEnd { get; set; }
+
+    private IReadOnlyList<GovConMoney.Application.Models.CloseValidationStepRow> checks = [];
+    private IReadOnlyList<GovConMoney.Application.Models.SubledgerGlReconciliationRow> tieOuts = [];
+    private IReadOnlyList<GovConMoney.Application.Models.MonthlyCloseComplianceRow> monthlyCloseRows = [];
+    private List<GovConMoney.Domain.Entities.AccountingPeriod> periods = [];
+    private string? error;
+    private bool closed;
+    private bool validated;
+    private int failed;
+    private string? periodStartString => periodStart?.ToString("yyyy-MM-dd");
+    private string? periodEndString => periodEnd?.ToString("yyyy-MM-dd");
+
+    protected override void OnParametersSet()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Nav.ToAbsoluteUri(Nav.Uri).Query);
+        error = query.TryGetValue("error", out var err) ? err.ToString() : null;
+        closed = query.TryGetValue("closed", out var closedFlag) && closedFlag == "1";
+        validated = query.TryGetValue("validated", out var validatedFlag) && validatedFlag == "1";
+        failed = query.TryGetValue("failed", out var failedValue) && int.TryParse(failedValue, out var parsedFailed) ? parsedFailed : 0;
+
+        periods = Store.AccountingPeriods.OrderByDescending(x => x.StartDate).ToList();
+        checks = [];
+        tieOuts = [];
+        monthlyCloseRows = MonthlyClose.CloseCadenceStatus(null, 10);
+        if (periodStart.HasValue && periodEnd.HasValue)
+        {
+            checks = Close.PreCloseValidation(periodStart.Value, periodEnd.Value);
+            tieOuts = Close.SubledgerToGlReconciliation(periodStart.Value, periodEnd.Value);
+        }
+    }
+
+    private string TieOutJsonLink()
+        => $"/api/reports/subledger-gl-reconciliation?format=json&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+
+    private string TieOutCsvLink() => TieOutJsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+
+    private string TrialBalanceJsonLink()
+        => $"/api/reports/trial-balance?format=json&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+
+    private string TrialBalanceCsvLink() => TrialBalanceJsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+
+    private string MonthlyCloseComplianceJsonLink() => "/api/reports/monthly-close-compliance?format=json&closeGraceDays=10";
+
+    private string MonthlyCloseComplianceCsvLink() => "/api/reports/monthly-close-compliance?format=csv&closeGraceDays=10";
+}

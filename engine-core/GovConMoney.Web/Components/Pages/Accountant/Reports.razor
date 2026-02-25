@@ -1,0 +1,109 @@
+@page "/accountant/reports"
+@attribute [Authorize(Roles = "Accountant")]
+
+<h3>Accountant - Reports</h3>
+<p>Reporting hub for labor, project, compliance, and audit analysis.</p>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Expense Category Assignment</h5>
+        <p class="card-text">Classify submitted expenses as allowable, unallowable, G&amp;A, overhead, and other accounting categories.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/expenses/categories">Open Expense Categories</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Labor Distribution</h5>
+        <p class="card-text">Review labor charging by employee and charge code.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/labor">Open Labor Report</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Project Summary</h5>
+        <p class="card-text">Analyze direct, indirect, and unallowable project costs.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/project">Open Project Report</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">CLIN Summary</h5>
+        <p class="card-text">Roll up costs by Contract -> Task Order -> CLIN -> WBS -> Charge Code for CLIN-tracked contracts.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/clin-summary">Open CLIN Summary</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Timesheet Compliance</h5>
+        <p class="card-text">Track missing days, late submissions, and correction activity.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/compliance">Open Compliance Report</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">Audit Trail</h5>
+        <p class="card-text">Search forensic accounting/security events and export results.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/audit">Open Audit Report</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">General Journal</h5>
+        <p class="card-text">Post approved time cards to the ledger and review balanced debit/credit journal entries.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/journal">Open General Journal</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Adjusting Journal Workflow</h5>
+        <p class="card-text">Prepare adjusting entries, route approvals, post, and reverse with audit evidence.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/adjusting-journal">Open Adjusting Workflow</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Payroll Reconciliation</h5>
+        <p class="card-text">Import payroll expense batches and reconcile payroll actuals to posted labor accruals.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/payroll">Open Payroll Reconciliation</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Indirect Rates & Burden</h5>
+        <p class="card-text">Compute indirect rates, apply burdens, and rerate adjustments with GL posting.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/indirect">Open Indirect Rates</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Billings & Reconciliation</h5>
+        <p class="card-text">Generate invoices from allowable booked costs, enforce ceilings, and reconcile billed to booked.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/billing">Open Billing</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Trial Balance</h5>
+        <p class="card-text">View period debits/credits by account and verify balance.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/trial-balance">Open Trial Balance</a>
+    </div>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <h5 class="card-title">Period Close</h5>
+        <p class="card-text">Run pre-close validations, tie-outs, and close the accounting period.</p>
+        <a class="btn btn-sm btn-primary" href="/accountant/reports/period-close">Open Period Close</a>
+    </div>
+</div>

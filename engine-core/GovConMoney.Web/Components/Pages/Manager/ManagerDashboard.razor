@@ -1,0 +1,14 @@
+@page "/manager"
+@attribute [Authorize(Roles = "Manager")]
+
+<h2>Manager Dashboard</h2>
+<p>Management review workspace for accounting control sign-off.</p>
+
+<ul>
+    <li><a href="/accountant/reports/period-close">Period Close Review</a></li>
+    <li><a href="/accountant/reports/indirect">Indirect Rate Review</a></li>
+    <li><a href="/accountant/reports/billing">Billing Review</a></li>
+    <li><a href="/accountant/reports/adjusting-journal">Adjusting Entries Review</a></li>
+    <li><a href="/accountant/reports/trial-balance">Trial Balance</a></li>
+    <li><a href="/accountant/reports/audit">Audit Trail</a></li>
+</ul>

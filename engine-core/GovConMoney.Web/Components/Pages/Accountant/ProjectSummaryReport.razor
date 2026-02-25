@@ -1,0 +1,29 @@
+@page "/accountant/reports/project"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.ReportingService Reporting
+
+<h3>Accountant - Project Summary Report</h3>
+<p>
+    API Export:
+    <a href="/api/reports/project?format=json" target="_blank">JSON</a> |
+    <a href="/api/reports/project?format=csv" target="_blank">CSV</a>
+</p>
+
+<table class="table mt-2">
+    <thead><tr><th>Contract</th><th>Direct</th><th>Allocated Indirect</th><th>Unallowable</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr><td>@row.ContractNumber</td><td>@row.DirectCost</td><td>@row.AllocatedIndirect</td><td>@row.Unallowable</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private IReadOnlyList<GovConMoney.Application.Models.ProjectSummaryRow> rows = [];
+
+    protected override void OnInitialized()
+    {
+        rows = Reporting.ProjectSummary();
+    }
+}

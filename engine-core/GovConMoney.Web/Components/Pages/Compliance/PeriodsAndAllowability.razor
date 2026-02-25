@@ -1,0 +1,206 @@
+@page "/compliance/periods"
+@attribute [Authorize(Roles = "Compliance")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject ComplianceService ComplianceService
+
+<h3>Compliance - Accounting Periods and Allowability</h3>
+<p>API view: <a href="/api/compliance/periods-view" target="_blank">periods</a> | <a href="/api/compliance/allowability-view" target="_blank">allowability</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<h4>Create Accounting Period</h4>
+<form class="mb-3" @onsubmit="CreatePeriodAsync" @onsubmit:preventDefault="true">
+    <input type="date" class="form-control mb-1" @bind="newPeriodStart" />
+    <input type="date" class="form-control mb-1" @bind="newPeriodEnd" />
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Create Period</button>
+</form>
+
+<h4>Accounting Periods</h4>
+<table class="table">
+    <thead><tr><th>Start</th><th>End</th><th>Status</th><th>Change</th></tr></thead>
+    <tbody>
+    @foreach (var p in periods)
+    {
+        <tr>
+            <td>@p.StartDate</td><td>@p.EndDate</td><td>@p.Status</td>
+            <td>
+                <button class="btn btn-sm btn-outline-secondary" type="button" @onclick="() => TogglePeriodStatusAsync(p.Id, p.Status)">
+                    @(p.Status == AccountingPeriodStatus.Open ? "Close" : "Open")
+                </button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h4>Upsert Allowability Rule</h4>
+<form class="mb-3" @onsubmit="UpsertRuleAsync" @onsubmit:preventDefault="true">
+    <select class="form-select mb-1" @bind="ruleCostType"><option>Direct</option><option>Indirect</option><option>Unallowable</option></select>
+    <input class="form-control mb-1" placeholder="Rule Name" @bind="ruleName" />
+    <input class="form-control mb-1" placeholder="Description" @bind="ruleDescription" />
+    <select class="form-select mb-1" @bind="ruleRequiresComment"><option value="true">true</option><option value="false">false</option></select>
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Save Rule</button>
+</form>
+
+<h4>Allowability Rules</h4>
+<table class="table">
+    <thead><tr><th>Cost Type</th><th>Rule</th><th>Description</th><th>Requires Comment</th></tr></thead>
+    <tbody>
+    @foreach (var rule in rules)
+    {
+        <tr><td>@rule.CostType</td><td>@rule.RuleName</td><td>@rule.RuleDescription</td><td>@rule.RequiresComment</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<PeriodRow> periods = [];
+    private List<RuleRow> rules = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private DateOnly newPeriodStart = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly newPeriodEnd = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(14));
+    private string ruleCostType = "Direct";
+    private string ruleName = string.Empty;
+    private string ruleDescription = string.Empty;
+    private bool ruleRequiresComment = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            periods = Repository.Query<AccountingPeriod>(tenantId)
+                .OrderByDescending(x => x.StartDate)
+                .Select(x => new PeriodRow { Id = x.Id, StartDate = x.StartDate, EndDate = x.EndDate, Status = x.Status })
+                .ToList();
+
+            rules = Repository.Query<AllowabilityRule>(tenantId)
+                .OrderBy(x => x.CostType)
+                .ThenBy(x => x.RuleName)
+                .Select(x => new RuleRow
+                {
+                    CostType = x.CostType.ToString(),
+                    RuleName = x.RuleName,
+                    RuleDescription = x.RuleDescription,
+                    RequiresComment = x.RequiresComment
+                })
+                .ToList();
+
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CreatePeriodAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            ComplianceService.CreateAccountingPeriod(newPeriodStart, newPeriodEnd);
+            message = "Accounting period created.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task TogglePeriodStatusAsync(Guid periodId, AccountingPeriodStatus currentStatus)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var nextStatus = currentStatus == AccountingPeriodStatus.Open ? AccountingPeriodStatus.Closed : AccountingPeriodStatus.Open;
+            ComplianceService.SetAccountingPeriodStatus(periodId, nextStatus, "Status toggle from portal");
+            message = "Accounting period status updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task UpsertRuleAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var costType = Enum.TryParse<CostType>(ruleCostType, true, out var parsed) ? parsed : CostType.Direct;
+            ComplianceService.UpsertAllowabilityRule(costType, ruleName.Trim(), ruleDescription.Trim(), ruleRequiresComment);
+            message = "Allowability rule saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+
+    private sealed class PeriodRow
+    {
+        public Guid Id { get; set; }
+        public DateOnly StartDate { get; set; }
+        public DateOnly EndDate { get; set; }
+        public AccountingPeriodStatus Status { get; set; }
+    }
+
+    private sealed class RuleRow
+    {
+        public string CostType { get; set; } = string.Empty;
+        public string RuleName { get; set; } = string.Empty;
+        public string RuleDescription { get; set; } = string.Empty;
+        public bool RequiresComment { get; set; }
+    }
+}

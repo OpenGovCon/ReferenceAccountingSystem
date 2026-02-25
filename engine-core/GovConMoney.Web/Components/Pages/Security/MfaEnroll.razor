@@ -1,0 +1,250 @@
+@page "/security/mfa-enroll"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Identity
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@using GovConMoney.Web.Security
+@inject AuthenticationStateProvider AuthStateProvider
+@inject UserManager<GovConIdentityUser> UserManager
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+@inject GovConMoney.Application.Abstractions.IAuditService Audit
+@inject NavigationManager Nav
+
+<h3>MFA Enrollment</h3>
+
+@if (isFirstLogin)
+{
+    <div class="alert alert-warning">
+        Multi-factor authentication is required. Complete enrollment to continue.
+    </div>
+}
+
+@if (!isEnrollmentVerified)
+{
+    <div class="card mfa-card">
+        <div class="card-body">
+            <h5 class="card-title">Step 1 of 2: Add Authenticator</h5>
+            <p class="card-text">Scan the QR code with your authenticator app, then enter the 6-digit code.</p>
+            @if (!string.IsNullOrWhiteSpace(qrCodeUrl))
+            {
+                <img class="mfa-qr" src="@qrCodeUrl" alt="MFA QR Code" />
+            }
+            <div class="mt-2"><strong>Manual setup key:</strong> <code>@mfaKey</code></div>
+        </div>
+    </div>
+
+    <div class="card mfa-card">
+        <div class="card-body">
+            <h5 class="card-title">Step 2 of 2: Verify TOTP</h5>
+            @if (!string.IsNullOrWhiteSpace(enrollmentError))
+            {
+                <div class="alert alert-danger mb-3">@enrollmentError</div>
+            }
+            <label class="form-label">Authenticator code</label>
+            <input class="form-control" @bind="verificationCode" placeholder="123456" />
+            <button class="btn btn-primary mt-3" @onclick="EnableMfaAsync">Validate and Continue</button>
+        </div>
+    </div>
+}
+
+@if (isEnrollmentVerified)
+{
+    <div class="card mfa-card">
+        <div class="card-body">
+            <h5 class="card-title">MFA Enabled: Recovery Codes</h5>
+            @if (!string.IsNullOrWhiteSpace(enrollmentSuccess))
+            {
+                <div class="alert alert-success mb-3">@enrollmentSuccess</div>
+            }
+            <p class="card-text">Use these one-time codes if you lose access to your authenticator app.</p>
+            <ul>
+                @foreach (var recovery in recoveryCodes)
+                {
+                    <li><code>@recovery</code></li>
+                }
+            </ul>
+            <a class="btn btn-primary me-2" href="/security/passkeys">Setup Passkey</a>
+            <a class="btn btn-success" href="/home">Continue</a>
+        </div>
+    </div>
+}
+
+<div class="card mfa-card">
+    <div class="card-body">
+        <h5 class="card-title">Re-enroll MFA With Recovery Code</h5>
+        @if (!string.IsNullOrWhiteSpace(recoveryError))
+        {
+            <div class="alert alert-danger mb-3">@recoveryError</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(recoverySuccess))
+        {
+            <div class="alert alert-success mb-3">@recoverySuccess</div>
+        }
+        <p class="card-text">If you changed/lost your authenticator, redeem a recovery code to reset MFA enrollment.</p>
+        <label class="form-label">Recovery code</label>
+        <input class="form-control" @bind="recoveryCodeInput" placeholder="xxxx-xxxx" />
+        <button class="btn btn-outline-secondary mt-3" @onclick="ReEnrollWithRecoveryCodeAsync">Re-enroll using recovery code</button>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] public string? first { get; set; }
+
+    private GovConIdentityUser? currentUser;
+    private string verificationCode = string.Empty;
+    private string recoveryCodeInput = string.Empty;
+    private string? mfaKey;
+    private string? otpUri;
+    private string? qrCodeUrl;
+    private string? enrollmentError;
+    private string? enrollmentSuccess;
+    private string? recoveryError;
+    private string? recoverySuccess;
+    private readonly List<string> recoveryCodes = [];
+    private bool isFirstLogin;
+    private bool isEnrollmentVerified => recoveryCodes.Count > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isFirstLogin = string.Equals(first, "1", StringComparison.OrdinalIgnoreCase);
+        await LoadCurrentUserAsync();
+        await EnsureAuthenticatorSetupAsync(resetKey: false);
+    }
+
+    private async Task LoadCurrentUserAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var principal = authState.User;
+        currentUser = await UserManager.GetUserAsync(principal);
+    }
+
+    private async Task EnsureAuthenticatorSetupAsync(bool resetKey)
+    {
+        enrollmentError = null;
+        enrollmentSuccess = null;
+
+        if (currentUser is null)
+        {
+            enrollmentError = "User context unavailable.";
+            return;
+        }
+
+        if (resetKey)
+        {
+            await UserManager.ResetAuthenticatorKeyAsync(currentUser);
+        }
+
+        mfaKey = await UserManager.GetAuthenticatorKeyAsync(currentUser);
+        if (string.IsNullOrWhiteSpace(mfaKey))
+        {
+            await UserManager.ResetAuthenticatorKeyAsync(currentUser);
+            mfaKey = await UserManager.GetAuthenticatorKeyAsync(currentUser);
+        }
+
+        var issuer = Uri.EscapeDataString("GovConMoney");
+        var account = Uri.EscapeDataString(currentUser.Email ?? currentUser.UserName ?? currentUser.Id);
+        otpUri = $"otpauth://totp/{issuer}:{account}?secret={mfaKey}&issuer={issuer}&digits=6";
+        qrCodeUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={Uri.EscapeDataString(otpUri)}";
+    }
+
+    private async Task EnableMfaAsync()
+    {
+        if (currentUser is null)
+        {
+            enrollmentError = "User context unavailable.";
+            return;
+        }
+
+        enrollmentError = null;
+        enrollmentSuccess = null;
+        recoveryError = null;
+        recoveryCodes.Clear();
+
+        var code = (verificationCode ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal);
+        var isValid = await UserManager.VerifyTwoFactorTokenAsync(currentUser, UserManager.Options.Tokens.AuthenticatorTokenProvider, code);
+        if (!isValid)
+        {
+            enrollmentError = "Invalid authenticator code.";
+            return;
+        }
+
+        await UserManager.SetTwoFactorEnabledAsync(currentUser, true);
+        var generated = await UserManager.GenerateNewTwoFactorRecoveryCodesAsync(currentUser, 10);
+        if (generated is not null)
+        {
+            recoveryCodes.AddRange(generated);
+        }
+
+        var appUser = Store.Users.SingleOrDefault(x => x.Id == currentUser.DomainUserId);
+        if (appUser is not null)
+        {
+            appUser.MfaEnabled = true;
+            Store.SaveChanges();
+        }
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var actorId = Guid.TryParse(authState.User.FindFirstValue("domain_user_id"), out var parsedActorId)
+            ? parsedActorId
+            : currentUser.DomainUserId;
+        var actorRoles = string.Join(',', authState.User.FindAll(ClaimTypes.Role).Select(x => x.Value));
+
+        Audit.Record(new AuditEvent
+        {
+            TenantId = currentUser.TenantId,
+            EntityType = "Security",
+            EntityId = currentUser.DomainUserId,
+            EventType = EventType.MfaEnrollment,
+            ActorUserId = actorId,
+            ActorRoles = actorRoles,
+            OccurredAtUtc = DateTime.UtcNow,
+            ReasonForChange = "MFA enrollment completed.",
+            CorrelationId = Guid.NewGuid().ToString("N")
+        });
+
+        enrollmentSuccess = "MFA enabled. Save your recovery codes now.";
+    }
+
+    private async Task ReEnrollWithRecoveryCodeAsync()
+    {
+        if (currentUser is null)
+        {
+            recoveryError = "User context unavailable.";
+            return;
+        }
+
+        recoveryError = null;
+        recoverySuccess = null;
+        enrollmentError = null;
+        enrollmentSuccess = null;
+        recoveryCodes.Clear();
+        verificationCode = string.Empty;
+
+        var code = (recoveryCodeInput ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            recoveryError = "Recovery code is required.";
+            return;
+        }
+
+        var redeemResult = await UserManager.RedeemTwoFactorRecoveryCodeAsync(currentUser, code);
+        if (!redeemResult.Succeeded)
+        {
+            recoveryError = "Recovery code is invalid or already used.";
+            return;
+        }
+
+        await UserManager.SetTwoFactorEnabledAsync(currentUser, false);
+        await EnsureAuthenticatorSetupAsync(resetKey: true);
+
+        var appUser = Store.Users.SingleOrDefault(x => x.Id == currentUser.DomainUserId);
+        if (appUser is not null)
+        {
+            appUser.MfaEnabled = false;
+            Store.SaveChanges();
+        }
+
+        recoverySuccess = "Recovery code accepted. Scan the new QR code and verify to complete re-enrollment.";
+    }
+}

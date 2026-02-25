@@ -1,0 +1,67 @@
+@page "/timereporter/status"
+@attribute [Authorize(Roles = "TimeReporter")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Domain.Entities
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+
+<h3>Time Reporter - Time Card Status</h3>
+<p>API view: <a href="/api/timereporter/status-view" target="_blank">/api/timereporter/status-view</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<table class="table">
+    <thead><tr><th>Time Card Id</th><th>Period</th><th>Status</th><th>Compliance</th><th>Submitted</th><th>Approved</th><th>Version</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.Id</td>
+            <td>@row.PeriodStart - @row.PeriodEnd</td>
+            <td>@row.Status</td>
+            <td>
+                @if (row.IsComplianceFlagged)
+                {
+                    <span class="text-danger">Flagged</span>
+                }
+                else
+                {
+                    <span class="text-success">OK</span>
+                }
+            </td>
+            <td>@row.SubmittedAtUtc</td>
+            <td>@row.ApprovedAtUtc</td>
+            <td>@row.VersionNumber</td>
+        </tr>
+        @if (row.IsComplianceFlagged && !string.IsNullOrWhiteSpace(row.ComplianceIssuesJson))
+        {
+            <tr>
+                <td colspan="7"><small class="text-danger">@row.ComplianceIssuesJson</small></td>
+            </tr>
+        }
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<Timesheet> rows = [];
+    private string? error;
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            rows = Repository.Query<Timesheet>(TenantContext.TenantId)
+                .Where(x => x.UserId == TenantContext.UserId)
+                .OrderByDescending(x => x.PeriodEnd)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

@@ -1,0 +1,268 @@
+@page "/accountant/reports/billing"
+@attribute [Authorize(Policy = "RequireManagerOrAccountant")]
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+@inject GovConMoney.Application.Abstractions.ITenantContext TenantContext
+@inject GovConMoney.Application.Services.BillingService Billing
+
+<h3>Accountant - Billings</h3>
+<p>Generate billing runs from posted allowable costs, enforce ceilings, approve/post billings, and reconcile billed-to-booked.</p>
+@if (managementPolicy is not null)
+{
+    <p class="text-muted">
+        Manager approval threshold: @(managementPolicy.RequireManagerApprovalForBillingAboveThreshold ? managementPolicy.BillingManagerApprovalThreshold.ToString("0.00") : "Disabled")
+    </p>
+}
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <p class="text-danger">@error</p>
+}
+@if (ceilingSaved.HasValue || generated.HasValue || approved.HasValue || posted.HasValue)
+{
+    <p class="text-success">Billing workflow action completed.</p>
+}
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Contract Billing Ceiling</h5>
+            <form method="post" action="/api/accountant/billing/ceiling-form" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Contract</label>
+                <select class="form-select" name="contractId" required>
+                    <option value="">Select contract</option>
+                    @foreach (var contract in contracts)
+                    {
+                        <option value="@contract.Id">@contract.ContractNumber</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Funded</label>
+                <input class="form-control" type="number" step="0.01" min="0" name="fundedAmount" required />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Ceiling</label>
+                <input class="form-control" type="number" step="0.01" min="0" name="ceilingAmount" required />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Start</label>
+                <input class="form-control" type="date" name="effectiveStartDate" value="@DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd")" required />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">End</label>
+                <input class="form-control" type="date" name="effectiveEndDate" value="@DateOnly.FromDateTime(DateTime.Today).AddYears(1).ToString("yyyy-MM-dd")" required />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Active</label>
+                <input class="form-check-input ms-2" type="checkbox" name="isActive" value="true" checked />
+            </div>
+                <div class="col-12">
+                    <button class="btn btn-outline-primary" type="submit">Save Ceiling</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<AuthorizeView Roles="Accountant">
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Generate Billing Run</h5>
+            <form method="post" action="/api/accountant/billing/generate-form" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Period Start</label>
+                <input class="form-control" type="date" name="periodStart" value="@PeriodStartString" required />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Period End</label>
+                <input class="form-control" type="date" name="periodEnd" value="@PeriodEndString" required />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Contract (optional)</label>
+                <select class="form-select" name="contractId">
+                    <option value="">All contracts</option>
+                    @foreach (var contract in contracts)
+                    {
+                        <option value="@contract.Id">@contract.ContractNumber</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Notes</label>
+                <input class="form-control" type="text" name="notes" />
+            </div>
+                <div class="col-12">
+                    <button class="btn btn-primary" type="submit">Generate Draft Billing Run</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AuthorizeView>
+
+<h5>Billing Runs</h5>
+<table class="table">
+    <thead>
+        <tr>
+            <th>Run Date</th>
+            <th>Period</th>
+            <th>Status</th>
+            <th>Invoice Count</th>
+            <th>Total</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var run in billingRuns)
+        {
+            <tr>
+                <td>@run.RunDateUtc</td>
+                <td>@run.PeriodStart - @run.PeriodEnd</td>
+                <td>@run.Status</td>
+                <td>@run.InvoiceCount</td>
+                <td>@run.TotalAmount</td>
+                <td>
+                    <AuthorizeView Roles="Manager,Accountant">
+                        @if (string.Equals(run.Status, "Draft", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <form method="post" action="/api/manager/billing/approve-form" class="d-inline">
+                                <input type="hidden" name="billingRunId" value="@run.BillingRunId" />
+                                <input type="hidden" name="reason" value="Billing run reviewed and approved." />
+                                <button class="btn btn-sm btn-outline-success" type="submit">Approve</button>
+                            </form>
+                        }
+                    </AuthorizeView>
+                    <AuthorizeView Roles="Accountant">
+                        @if (string.Equals(run.Status, "Approved", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <form method="post" action="/api/accountant/billing/post-form" class="d-inline">
+                                <input type="hidden" name="billingRunId" value="@run.BillingRunId" />
+                                <input type="hidden" name="reason" value="Post billing run to general ledger." />
+                                <button class="btn btn-sm btn-success" type="submit">Post</button>
+                            </form>
+                        }
+                    </AuthorizeView>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h5>Invoices</h5>
+<table class="table">
+    <thead>
+        <tr>
+            <th>Invoice #</th>
+            <th>Contract</th>
+            <th>Status</th>
+            <th>Period</th>
+            <th>Total</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var invoice in invoices)
+        {
+            <tr>
+                <td>@invoice.InvoiceNumber</td>
+                <td>@invoice.ContractNumber</td>
+                <td>@invoice.Status</td>
+                <td>@invoice.PeriodStart - @invoice.PeriodEnd</td>
+                <td>@invoice.TotalAmount</td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h5>Billed-to-Booked Reconciliation</h5>
+<p>
+    API Export:
+    <a href="@JsonLink()" target="_blank">JSON</a> |
+    <a href="@CsvLink()" target="_blank">CSV</a>
+</p>
+<table class="table">
+    <thead>
+        <tr>
+            <th>Contract</th>
+            <th>Booked Allowable</th>
+            <th>Billed</th>
+            <th>Variance</th>
+            <th>Limit</th>
+            <th>Billed To Date</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var row in reconciliation)
+        {
+            <tr>
+                <td>@row.ContractNumber</td>
+                <td>@row.BookedAllowable</td>
+                <td>@row.BilledAmount</td>
+                <td>@row.Variance</td>
+                <td>@(row.BillingLimit?.ToString() ?? "(none)")</td>
+                <td>@(row.BilledToDate?.ToString() ?? "0")</td>
+                <td>@row.Status</td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public string? error { get; set; }
+    [SupplyParameterFromQuery] public int? ceilingSaved { get; set; }
+    [SupplyParameterFromQuery] public Guid? generated { get; set; }
+    [SupplyParameterFromQuery] public int? approved { get; set; }
+    [SupplyParameterFromQuery] public int? posted { get; set; }
+
+    private List<GovConMoney.Domain.Entities.Contract> contracts = [];
+    private IReadOnlyList<GovConMoney.Application.Models.BillingRunSummaryRow> billingRuns = [];
+    private List<InvoiceListRow> invoices = [];
+    private IReadOnlyList<GovConMoney.Application.Models.BillingReconciliationRow> reconciliation = [];
+    private GovConMoney.Domain.Entities.ManagementReviewPolicy? managementPolicy;
+    private DateOnly periodStart;
+    private DateOnly periodEnd;
+    private string PeriodStartString => periodStart.ToString("yyyy-MM-dd");
+    private string PeriodEndString => periodEnd.ToString("yyyy-MM-dd");
+
+    protected override void OnParametersSet()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        periodStart = new DateOnly(today.Year, today.Month, 1);
+        periodEnd = periodStart.AddMonths(1).AddDays(-1);
+
+        contracts = Store.Contracts.Where(x => x.TenantId == TenantContext.TenantId).OrderBy(x => x.ContractNumber).ToList();
+        managementPolicy = Store.ManagementReviewPolicies.SingleOrDefault(x => x.TenantId == TenantContext.TenantId);
+        billingRuns = Billing.BillingRuns();
+        invoices = Store.Invoices
+            .Where(x => x.TenantId == TenantContext.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToList()
+            .Select(x => new InvoiceListRow(
+                x.InvoiceNumber,
+                contracts.FirstOrDefault(c => c.Id == x.ContractId)?.ContractNumber ?? "(unknown)",
+                x.Status.ToString(),
+                x.PeriodStart,
+                x.PeriodEnd,
+                x.TotalAmount))
+            .ToList();
+        reconciliation = Billing.BilledToBookedReconciliation(periodStart, periodEnd, null);
+    }
+
+    private string JsonLink()
+    {
+        return $"/api/reports/billing-reconciliation?format=json&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+    }
+
+    private string CsvLink()
+    {
+        return $"/api/reports/billing-reconciliation?format=csv&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+    }
+
+    private sealed record InvoiceListRow(
+        string InvoiceNumber,
+        string ContractNumber,
+        string Status,
+        DateOnly PeriodStart,
+        DateOnly PeriodEnd,
+        decimal TotalAmount);
+}
