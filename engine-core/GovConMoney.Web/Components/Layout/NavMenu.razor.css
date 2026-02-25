@@ -1,0 +1,183 @@
+.top-nav-wrap {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+}
+
+.top-nav {
+    align-items: center;
+    background: linear-gradient(90deg, #2f3c2f 0%, #445844 55%, #546e54 100%);
+    border-bottom: 1px solid #2f4a35;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+}
+
+.brand-wrap {
+    flex: 0 0 auto;
+}
+
+.brand {
+    color: #f3f1df;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.link-wrap {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.menu-link {
+    border-radius: 6px;
+    color: #e7ecd5;
+    padding: 0.35rem 0.6rem;
+    text-decoration: none;
+}
+
+.menu-link.active,
+.menu-link:hover {
+    background: rgba(232, 224, 188, 0.22);
+    color: #f8f5e8;
+}
+
+.role-wrap {
+    align-items: center;
+    display: flex;
+    min-width: 120px;
+}
+
+.role-dropdown {
+    position: relative;
+}
+
+.role-dropdown summary {
+    background: #3a503c;
+    border: 1px solid #678267;
+    border-radius: 6px;
+    color: #f3f1df;
+    cursor: pointer;
+    list-style: none;
+    padding: 0.35rem 0.65rem;
+    white-space: nowrap;
+}
+
+.role-dropdown summary::-webkit-details-marker {
+    display: none;
+}
+
+.role-panel {
+    background: #fbf9ef;
+    border: 1px solid #c7d1b5;
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(44, 66, 52, 0.18);
+    min-width: 190px;
+    padding: 0.45rem;
+    position: absolute;
+    right: 0;
+    top: 2.2rem;
+}
+
+.account-wrap {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 160px;
+}
+
+.account-dropdown {
+    position: relative;
+}
+
+.account-dropdown summary {
+    align-items: center;
+    background: #36563d;
+    border: 1px solid #719174;
+    border-radius: 6px;
+    color: #f3f1df;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 0.4rem;
+    list-style: none;
+    padding: 0.35rem 0.65rem;
+}
+
+.account-dropdown summary::-webkit-details-marker {
+    display: none;
+}
+
+.account-panel {
+    background: #fbf9ef;
+    border: 1px solid #c7d1b5;
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(44, 66, 52, 0.2);
+    min-width: 150px;
+    padding: 0.5rem;
+    position: absolute;
+    right: 0;
+    top: 2.2rem;
+}
+
+.role-panel .sub-link,
+.account-panel a,
+.account-panel button {
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    color: #2f4a35;
+    display: block;
+    font: inherit;
+    padding: 0.45rem 0.55rem;
+    text-align: left;
+    text-decoration: none;
+    width: 100%;
+}
+
+.role-panel .sub-link.active,
+.role-panel .sub-link:hover,
+.account-panel a:hover,
+.account-panel button:hover {
+    background: #e7edd9;
+}
+
+.notif-badge,
+.notif-badge-inline {
+    align-items: center;
+    background: #d6e388;
+    border-radius: 999px;
+    color: #253824;
+    display: inline-flex;
+    font-size: 0.72rem;
+    font-weight: 700;
+    justify-content: center;
+    line-height: 1;
+    min-width: 1.2rem;
+    padding: 0.15rem 0.38rem;
+}
+
+.notif-badge-inline {
+    margin-left: 0.35rem;
+}
+
+.sub-link {
+    text-decoration: none;
+}
+
+@media (max-width: 900px) {
+    .top-nav {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .account-wrap {
+        justify-content: flex-start;
+        min-width: 0;
+    }
+
+    .role-wrap {
+        min-width: 0;
+    }
+}

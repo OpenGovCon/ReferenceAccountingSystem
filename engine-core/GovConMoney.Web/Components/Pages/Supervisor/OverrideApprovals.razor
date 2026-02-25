@@ -1,0 +1,793 @@
+@page "/supervisor/overrides"
+@attribute [Authorize(Roles = "Supervisor")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject ComplianceService ComplianceService
+
+<h3>Supervisor - Time Override Approvals</h3>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<h5 class="mt-3">Pending Approvals</h5>
+
+@if (pendingApprovals.Count == 0)
+{
+    <div class="alert alert-light border">No pending out-of-window, overtime, or future PTO approvals.</div>
+}
+else
+{
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Employee</th>
+                <th>Work Date</th>
+                <th>Contract</th>
+                <th>Details</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in pendingApprovals.OrderByDescending(x => x.WorkDate).ThenBy(x => x.Employee))
+            {
+                <tr>
+                    <td>@row.TypeLabel</td>
+                    <td>@row.Employee</td>
+                    <td>@row.WorkDate</td>
+                    <td>@row.Contract</td>
+                    <td>@row.Details</td>
+                    <td><span class="badge bg-warning text-dark">Pending</span></td>
+                    <td>
+                        @if (row.Type == ApprovalType.OutOfWindow)
+                        {
+                            <button class="btn btn-sm btn-primary" @onclick="() => ApprovePendingOutOfWindowAsync(row)" disabled="@isBusy">Approve</button>
+                        }
+                        else if (row.Type == ApprovalType.FuturePto)
+                        {
+                            <button class="btn btn-sm btn-primary" @onclick="() => ApprovePendingFuturePtoAsync(row)" disabled="@isBusy">Approve</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-primary" @onclick="() => ApprovePendingOvertimeAsync(row)" disabled="@isBusy">Approve</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<h5 class="mt-4">Processed Approvals (Current Work Period)</h5>
+
+<div class="row g-2 mb-3">
+    <div class="col-md-3">
+        <label class="form-label">Employee</label>
+        <input class="form-control form-control-sm" @bind="EmployeeFilter" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">From</label>
+        <input type="date" class="form-control form-control-sm" @bind="FromDateFilter" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">To</label>
+        <input type="date" class="form-control form-control-sm" @bind="ToDateFilter" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Contract</label>
+        <input class="form-control form-control-sm" @bind="ContractFilter" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Type</label>
+        <select class="form-select form-select-sm" @bind="TypeFilter">
+            <option value="@FilterAll">All</option>
+            <option value="@TypeOutOfWindow">Out-of-Window</option>
+            <option value="@TypeOvertime">Overtime</option>
+            <option value="@TypeFuturePto">Future PTO</option>
+        </select>
+    </div>
+    <div class="col-md-1">
+        <label class="form-label">Status</label>
+        <select class="form-select form-select-sm" @bind="StatusFilter">
+            <option value="@FilterAll">All</option>
+            <option value="@StatusPending">Pending</option>
+            <option value="@StatusApproved">Approved</option>
+        </select>
+    </div>
+</div>
+
+@if (filteredProcessedApprovals.Count == 0)
+{
+    <div class="alert alert-light border">No approvals match the current filter.</div>
+}
+else
+{
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Employee</th>
+                <th>Work Date</th>
+                <th>Contract</th>
+                <th>Details</th>
+                <th>Status</th>
+                <th>Approved At (UTC)</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in filteredProcessedApprovals.OrderByDescending(x => x.WorkDate).ThenBy(x => x.Employee))
+        {
+            <tr>
+                <td>@row.TypeLabel</td>
+                <td>@row.Employee</td>
+                <td>@row.WorkDate</td>
+                <td>@row.Contract</td>
+                <td>@row.Details</td>
+                <td>
+                    <span class="badge bg-success">@row.Status</span>
+                </td>
+                <td>@(row.ApprovedAtUtc?.ToString("u") ?? "-")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private const int StandardDailyMinutes = 8 * 60;
+    private const string FilterAll = "All";
+    private const string StatusPending = "Pending";
+    private const string StatusApproved = "Approved";
+    private const string TypeOutOfWindow = "Out-of-Window";
+    private const string TypeOvertime = "Overtime";
+    private const string TypeFuturePto = "Future PTO";
+
+    private readonly List<ApprovalRow> pendingApprovals = [];
+    private readonly List<ApprovalRow> processedApprovals = [];
+    private readonly Dictionary<Guid, string> userNamesById = [];
+    private readonly Dictionary<Guid, ChargeCode> chargeCodeById = [];
+    private readonly Dictionary<Guid, WbsNode> wbsById = [];
+    private readonly Dictionary<Guid, Clin> clinById = [];
+    private readonly Dictionary<Guid, TaskOrder> taskOrderById = [];
+    private readonly Dictionary<Guid, Contract> contractById = [];
+    private readonly HashSet<Guid> supervisedUserIds = [];
+
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private string employeeFilter = string.Empty;
+    private string contractFilter = string.Empty;
+    private string typeFilter = FilterAll;
+    private string statusFilter = FilterAll;
+    private DateOnly fromDateFilter;
+    private DateOnly toDateFilter;
+    private List<ApprovalRow> filteredProcessedApprovals = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var tenantId = TenantContext.TenantId;
+        var now = DateOnly.FromDateTime(DateTime.UtcNow);
+        var workPeriod = Repository.Query<WorkPeriodConfiguration>(tenantId).FirstOrDefault();
+        var weekStartDay = workPeriod?.WeekStartDay ?? (int)DayOfWeek.Monday;
+        var periodLengthDays = workPeriod?.PeriodLengthDays <= 0 ? 7 : workPeriod!.PeriodLengthDays;
+        var periodStart = CurrentWorkPeriodStart(now, weekStartDay);
+        var periodEnd = periodStart.AddDays(periodLengthDays - 1);
+        fromDateFilter = periodStart;
+        toDateFilter = periodEnd;
+
+        userNamesById.Clear();
+        foreach (var user in Repository.Query<AppUser>(tenantId))
+        {
+            userNamesById[user.Id] = user.UserName;
+        }
+
+        supervisedUserIds.Clear();
+        foreach (var profile in Repository.Query<PersonnelProfile>(tenantId)
+            .Where(x => x.SupervisorUserId == TenantContext.UserId))
+        {
+            supervisedUserIds.Add(profile.UserId);
+        }
+
+        chargeCodeById.Clear();
+        foreach (var chargeCode in Repository.Query<ChargeCode>(tenantId))
+        {
+            chargeCodeById[chargeCode.Id] = chargeCode;
+        }
+
+        wbsById.Clear();
+        foreach (var wbs in Repository.Query<WbsNode>(tenantId))
+        {
+            wbsById[wbs.Id] = wbs;
+        }
+
+        clinById.Clear();
+        foreach (var clin in Repository.Query<Clin>(tenantId))
+        {
+            clinById[clin.Id] = clin;
+        }
+
+        taskOrderById.Clear();
+        foreach (var taskOrder in Repository.Query<TaskOrder>(tenantId))
+        {
+            taskOrderById[taskOrder.Id] = taskOrder;
+        }
+
+        contractById.Clear();
+        foreach (var contract in Repository.Query<Contract>(tenantId))
+        {
+            contractById[contract.Id] = contract;
+        }
+
+        pendingApprovals.Clear();
+        pendingApprovals.AddRange(BuildPendingOutOfWindowRows(tenantId));
+        pendingApprovals.AddRange(BuildPendingOvertimeRows(tenantId));
+        pendingApprovals.AddRange(BuildPendingFuturePtoRows(tenantId));
+
+        processedApprovals.Clear();
+        processedApprovals.AddRange(BuildProcessedOutOfWindowRows(tenantId, periodStart, periodEnd));
+        processedApprovals.AddRange(BuildProcessedOvertimeRows(tenantId, periodStart, periodEnd));
+        processedApprovals.AddRange(BuildProcessedFuturePtoRows(tenantId, periodStart, periodEnd));
+        ApplyProcessedFilters();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ApprovePendingOutOfWindowAsync(ApprovalRow row)
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            if (row.ChargeCodeId is null)
+            {
+                throw new DomainRuleException("Charge code is required for out-of-window approval.");
+            }
+
+            ComplianceService.ApproveOutOfWindowCharge(
+                row.UserId,
+                row.ChargeCodeId.Value,
+                row.WorkDate,
+                $"Supervisor approved pending out-of-window charge ({row.WorkDate:yyyy-MM-dd}).");
+            message = "Out-of-window approval completed.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ApprovePendingOvertimeAsync(ApprovalRow row)
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            ComplianceService.ApproveOvertimeAllowance(
+                row.UserId,
+                row.WorkDate,
+                row.PendingMinutes,
+                $"Supervisor approved pending overtime allowance ({row.WorkDate:yyyy-MM-dd}).");
+            message = "Overtime allowance approved.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ApprovePendingFuturePtoAsync(ApprovalRow row)
+    {
+        if (isBusy)
+        {
+            return;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            ComplianceService.ApproveFuturePto(
+                row.UserId,
+                row.WorkDate,
+                $"Supervisor approved future PTO ({row.WorkDate:yyyy-MM-dd}).");
+            message = "Future PTO approved.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private List<ApprovalRow> BuildPendingOutOfWindowRows(Guid tenantId)
+    {
+        var rows = new List<ApprovalRow>();
+        var timesheets = Repository.Query<Timesheet>(tenantId)
+            .Where(x => x.Status == TimesheetStatus.Draft || x.Status == TimesheetStatus.Submitted)
+            .Select(x => new { x.Id, x.UserId })
+            .ToList();
+        if (timesheets.Count == 0)
+        {
+            return rows;
+        }
+
+        var timesheetById = timesheets.ToDictionary(x => x.Id, x => x.UserId);
+        var timesheetIds = timesheets.Select(x => x.Id).ToList();
+        var lines = Repository.Query<TimesheetLine>(tenantId)
+            .Where(x => timesheetIds.Contains(x.TimesheetId))
+            .Where(x => x.EntryType == TimesheetEntryType.Work)
+            .ToList();
+        var assignments = Repository.Query<Assignment>(tenantId).ToList();
+        var approvals = Repository.Query<TimeChargeOverrideApproval>(tenantId).ToList();
+        var uniqueKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var line in lines)
+        {
+            var userId = timesheetById[line.TimesheetId];
+            if (!supervisedUserIds.Contains(userId))
+            {
+                continue;
+            }
+
+            var inWindow = assignments.Any(x =>
+                x.UserId == userId &&
+                x.ChargeCodeId == line.ChargeCodeId &&
+                line.WorkDate >= x.EffectiveStartDate &&
+                line.WorkDate <= x.EffectiveEndDate);
+            if (inWindow)
+            {
+                continue;
+            }
+
+            var overrideAllowed = assignments.Any(x =>
+                x.UserId == userId &&
+                x.ChargeCodeId == line.ChargeCodeId &&
+                x.SupervisorOverrideAllowed);
+            if (!overrideAllowed)
+            {
+                continue;
+            }
+
+            var alreadyApproved = approvals.Any(x =>
+                x.UserId == userId &&
+                x.ChargeCodeId == line.ChargeCodeId &&
+                x.WorkDate == line.WorkDate);
+            if (alreadyApproved)
+            {
+                continue;
+            }
+
+            var key = $"{userId:N}|{line.WorkDate:yyyyMMdd}|{line.ChargeCodeId:N}";
+            if (!uniqueKeys.Add(key))
+            {
+                continue;
+            }
+
+            rows.Add(new ApprovalRow
+            {
+                Type = ApprovalType.OutOfWindow,
+                UserId = userId,
+                Employee = GetEmployeeName(userId),
+                WorkDate = line.WorkDate,
+                Contract = ResolveContractNumber(line.ChargeCodeId),
+                ChargeCodeId = line.ChargeCodeId,
+                Details = $"Charge code {ResolveChargeCode(line.ChargeCodeId)} outside assignment window.",
+                PendingMinutes = 0,
+                Status = StatusPending
+            });
+        }
+
+        return rows;
+    }
+
+    private List<ApprovalRow> BuildPendingOvertimeRows(Guid tenantId)
+    {
+        var rows = new List<ApprovalRow>();
+        var timesheets = Repository.Query<Timesheet>(tenantId)
+            .Where(x => x.Status == TimesheetStatus.Draft || x.Status == TimesheetStatus.Submitted)
+            .Select(x => new { x.Id, x.UserId })
+            .ToList();
+        if (timesheets.Count == 0)
+        {
+            return rows;
+        }
+
+        var timesheetById = timesheets.ToDictionary(x => x.Id, x => x.UserId);
+        var timesheetIds = timesheets.Select(x => x.Id).ToList();
+        var lines = Repository.Query<TimesheetLine>(tenantId)
+            .Where(x => timesheetIds.Contains(x.TimesheetId))
+            .Where(x => x.EntryType == TimesheetEntryType.Work)
+            .ToList();
+        var overtimeApprovals = Repository.Query<OvertimeAllowanceApproval>(tenantId).ToList();
+
+        var grouped = lines
+            .Select(x => new { Line = x, UserId = timesheetById[x.TimesheetId] })
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .GroupBy(x => new { x.UserId, x.Line.WorkDate })
+            .Select(x => new
+            {
+                x.Key.UserId,
+                x.Key.WorkDate,
+                TotalMinutes = x.Sum(y => y.Line.Minutes),
+                ChargeCodeIds = x.Select(y => y.Line.ChargeCodeId).Distinct().ToList()
+            })
+            .Where(x => x.TotalMinutes > StandardDailyMinutes)
+            .ToList();
+
+        foreach (var group in grouped)
+        {
+            var requiredOvertime = group.TotalMinutes - StandardDailyMinutes;
+            var approvedOvertime = overtimeApprovals
+                .Where(x => x.UserId == group.UserId && x.WorkDate == group.WorkDate)
+                .Sum(x => x.ApprovedOvertimeMinutes);
+            var pendingOvertime = requiredOvertime - approvedOvertime;
+            if (pendingOvertime <= 0)
+            {
+                continue;
+            }
+
+            rows.Add(new ApprovalRow
+            {
+                Type = ApprovalType.Overtime,
+                UserId = group.UserId,
+                Employee = GetEmployeeName(group.UserId),
+                WorkDate = group.WorkDate,
+                Contract = ResolveContractForChargeCodes(group.ChargeCodeIds),
+                Details = $"Daily total {group.TotalMinutes} min; pending overtime {pendingOvertime} min.",
+                PendingMinutes = pendingOvertime,
+                Status = StatusPending
+            });
+        }
+
+        return rows;
+    }
+
+    private List<ApprovalRow> BuildPendingFuturePtoRows(Guid tenantId)
+    {
+        var rows = new List<ApprovalRow>();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var timesheets = Repository.Query<Timesheet>(tenantId)
+            .Where(x => x.Status == TimesheetStatus.Draft || x.Status == TimesheetStatus.Submitted)
+            .Select(x => new { x.Id, x.UserId })
+            .ToList();
+        if (timesheets.Count == 0)
+        {
+            return rows;
+        }
+
+        var timesheetById = timesheets.ToDictionary(x => x.Id, x => x.UserId);
+        var timesheetIds = timesheets.Select(x => x.Id).ToList();
+        var lines = Repository.Query<TimesheetLine>(tenantId)
+            .Where(x => timesheetIds.Contains(x.TimesheetId))
+            .Where(x => x.EntryType == TimesheetEntryType.Pto && x.WorkDate > today)
+            .ToList();
+        var approvals = Repository.Query<FuturePtoApproval>(tenantId).ToList();
+
+        var grouped = lines
+            .Select(x => new { UserId = timesheetById[x.TimesheetId], x.WorkDate, x.Minutes })
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .GroupBy(x => new { x.UserId, x.WorkDate })
+            .Select(x => new { x.Key.UserId, x.Key.WorkDate, Minutes = x.Sum(y => y.Minutes) })
+            .ToList();
+
+        foreach (var group in grouped)
+        {
+            var approved = approvals.Any(x => x.UserId == group.UserId && x.WorkDate == group.WorkDate);
+            if (approved)
+            {
+                continue;
+            }
+
+            rows.Add(new ApprovalRow
+            {
+                Type = ApprovalType.FuturePto,
+                UserId = group.UserId,
+                Employee = GetEmployeeName(group.UserId),
+                WorkDate = group.WorkDate,
+                Contract = "N/A",
+                Details = $"Future PTO entered for {group.Minutes} minute(s).",
+                PendingMinutes = group.Minutes,
+                Status = StatusPending
+            });
+        }
+
+        return rows;
+    }
+
+    private List<ApprovalRow> BuildProcessedOutOfWindowRows(Guid tenantId, DateOnly periodStart, DateOnly periodEnd)
+    {
+        var approvals = Repository.Query<TimeChargeOverrideApproval>(tenantId)
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .Where(x => x.WorkDate >= periodStart && x.WorkDate <= periodEnd)
+            .ToList();
+
+        return approvals
+            .Select(x => new ApprovalRow
+            {
+                Type = ApprovalType.OutOfWindow,
+                UserId = x.UserId,
+                Employee = GetEmployeeName(x.UserId),
+                WorkDate = x.WorkDate,
+                Contract = ResolveContractNumber(x.ChargeCodeId),
+                ChargeCodeId = x.ChargeCodeId,
+                Details = $"Charge code {ResolveChargeCode(x.ChargeCodeId)} ({x.Reason})",
+                Status = StatusApproved,
+                ApprovedAtUtc = x.ApprovedAtUtc
+            })
+            .ToList();
+    }
+
+    private List<ApprovalRow> BuildProcessedOvertimeRows(Guid tenantId, DateOnly periodStart, DateOnly periodEnd)
+    {
+        var approvals = Repository.Query<OvertimeAllowanceApproval>(tenantId)
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .Where(x => x.WorkDate >= periodStart && x.WorkDate <= periodEnd)
+            .ToList();
+
+        return approvals
+            .Select(x => new ApprovalRow
+            {
+                Type = ApprovalType.Overtime,
+                UserId = x.UserId,
+                Employee = GetEmployeeName(x.UserId),
+                WorkDate = x.WorkDate,
+                Contract = "N/A",
+                Details = $"{x.ApprovedOvertimeMinutes} overtime minute(s) ({x.Reason})",
+                PendingMinutes = x.ApprovedOvertimeMinutes,
+                Status = StatusApproved,
+                ApprovedAtUtc = x.ApprovedAtUtc
+            })
+            .ToList();
+    }
+
+    private List<ApprovalRow> BuildProcessedFuturePtoRows(Guid tenantId, DateOnly periodStart, DateOnly periodEnd)
+    {
+        var approvals = Repository.Query<FuturePtoApproval>(tenantId)
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .Where(x => x.WorkDate >= periodStart && x.WorkDate <= periodEnd)
+            .ToList();
+
+        return approvals
+            .Select(x => new ApprovalRow
+            {
+                Type = ApprovalType.FuturePto,
+                UserId = x.UserId,
+                Employee = GetEmployeeName(x.UserId),
+                WorkDate = x.WorkDate,
+                Contract = "N/A",
+                Details = $"Future PTO approved ({x.Reason})",
+                Status = StatusApproved,
+                ApprovedAtUtc = x.ApprovedAtUtc
+            })
+            .ToList();
+    }
+
+    private void ApplyProcessedFilters()
+    {
+        var query = processedApprovals.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(employeeFilter))
+        {
+            query = query.Where(x => x.Employee.Contains(employeeFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(contractFilter))
+        {
+            query = query.Where(x => x.Contract.Contains(contractFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        query = query.Where(x => x.WorkDate >= fromDateFilter && x.WorkDate <= toDateFilter);
+
+        if (!string.Equals(typeFilter, FilterAll, StringComparison.Ordinal))
+        {
+            query = query.Where(x => x.TypeLabel == typeFilter);
+        }
+
+        if (!string.Equals(statusFilter, FilterAll, StringComparison.Ordinal))
+        {
+            query = query.Where(x => x.Status.Equals(statusFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        filteredProcessedApprovals = query.ToList();
+    }
+
+    private static DateOnly CurrentWorkPeriodStart(DateOnly date, int weekStartDay)
+    {
+        var normalizedStart = ((weekStartDay % 7) + 7) % 7;
+        var delta = ((int)date.DayOfWeek - normalizedStart + 7) % 7;
+        return date.AddDays(-delta);
+    }
+
+    private string GetEmployeeName(Guid userId)
+        => userNamesById.TryGetValue(userId, out var name) ? name : userId.ToString();
+
+    private string ResolveChargeCode(Guid chargeCodeId)
+        => chargeCodeById.TryGetValue(chargeCodeId, out var chargeCode) ? chargeCode.Code : chargeCodeId.ToString();
+
+    private string ResolveContractNumber(Guid chargeCodeId)
+    {
+        if (!chargeCodeById.TryGetValue(chargeCodeId, out var chargeCode))
+        {
+            return "(Unknown)";
+        }
+
+        if (!wbsById.TryGetValue(chargeCode.WbsNodeId, out var wbs))
+        {
+            return "(Unknown)";
+        }
+
+        if (!clinById.TryGetValue(wbs.ClinId, out var clin))
+        {
+            return "(Unknown)";
+        }
+
+        if (!taskOrderById.TryGetValue(clin.TaskOrderId, out var taskOrder))
+        {
+            return "(Unknown)";
+        }
+
+        return contractById.TryGetValue(taskOrder.ContractId, out var contract)
+            ? contract.ContractNumber
+            : "(Unknown)";
+    }
+
+    private string ResolveContractForChargeCodes(IReadOnlyList<Guid> chargeCodeIds)
+    {
+        var contracts = chargeCodeIds
+            .Select(ResolveContractNumber)
+            .Where(x => !string.IsNullOrWhiteSpace(x) && x != "(Unknown)")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (contracts.Count == 0)
+        {
+            return "N/A";
+        }
+
+        if (contracts.Count == 1)
+        {
+            return contracts[0];
+        }
+
+        return "Multiple";
+    }
+
+    private enum ApprovalType
+    {
+        OutOfWindow = 1,
+        Overtime = 2,
+        FuturePto = 3
+    }
+
+    private sealed class ApprovalRow
+    {
+        public ApprovalType Type { get; set; }
+        public string TypeLabel => Type switch
+        {
+            ApprovalType.OutOfWindow => TypeOutOfWindow,
+            ApprovalType.Overtime => TypeOvertime,
+            ApprovalType.FuturePto => TypeFuturePto,
+            _ => TypeOutOfWindow
+        };
+        public Guid UserId { get; set; }
+        public string Employee { get; set; } = string.Empty;
+        public DateOnly WorkDate { get; set; }
+        public string Contract { get; set; } = "N/A";
+        public Guid? ChargeCodeId { get; set; }
+        public string Details { get; set; } = string.Empty;
+        public int PendingMinutes { get; set; }
+        public string Status { get; set; } = StatusPending;
+        public DateTime? ApprovedAtUtc { get; set; }
+    }
+
+    private string EmployeeFilter
+    {
+        get => employeeFilter;
+        set
+        {
+            employeeFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+
+    private string ContractFilter
+    {
+        get => contractFilter;
+        set
+        {
+            contractFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+
+    private string TypeFilter
+    {
+        get => typeFilter;
+        set
+        {
+            typeFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+
+    private string StatusFilter
+    {
+        get => statusFilter;
+        set
+        {
+            statusFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+
+    private DateOnly FromDateFilter
+    {
+        get => fromDateFilter;
+        set
+        {
+            fromDateFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+
+    private DateOnly ToDateFilter
+    {
+        get => toDateFilter;
+        set
+        {
+            toDateFilter = value;
+            ApplyProcessedFilters();
+        }
+    }
+}

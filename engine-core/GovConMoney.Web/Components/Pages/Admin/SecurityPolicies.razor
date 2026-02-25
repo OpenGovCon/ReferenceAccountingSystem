@@ -1,0 +1,222 @@
+@page "/admin/security"
+@attribute [Authorize(Roles = "Admin")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Infrastructure.Persistence
+@inject InMemoryDataStore Store
+@inject ITenantContext TenantContext
+@inject NavigationManager Nav
+
+<h3>Admin - Security Policies</h3>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<p>Default policy posture for this environment:</p>
+<ul>
+    <li>MFA required for all users.</li>
+    <li>Passkey enrollment required after onboarding.</li>
+    <li>Role-based authorization enforced by route policy.</li>
+    <li>Secure cookies with strict same-site and anti-forgery enabled.</li>
+</ul>
+
+<div class="card mb-3">
+    <div class="card-header">Time Card Work Period Configuration</div>
+    <div class="card-body">
+        <p class="mb-2">Configure weekly work period boundaries used for time card validation (one time card per user per work period).</p>
+        <form method="post" action="/api/admin/work-period/set-form" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Week Start Day</label>
+                <select class="form-select" name="weekStartDay" @bind="weekStartDay">
+                    @foreach (var option in dayOptions)
+                    {
+                        <option value="@option.Value">@option.Text</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Computed Week End Day</label>
+                <input class="form-control" value="@ComputedEndDayText()" readonly />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Period Length (Days)</label>
+                <input type="number" min="1" max="14" class="form-control" name="periodLengthDays" value="@periodLengthDays" />
+            </div>
+            <div class="col-md-3">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="dailyEntryRequired" name="dailyEntryRequired" value="true" checked="@dailyEntryRequired" />
+                    <label class="form-check-label" for="dailyEntryRequired">Daily entry required</label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Daily Entry Grace (Days)</label>
+                <input type="number" min="0" max="14" class="form-control" name="dailyEntryGraceDays" value="@dailyEntryGraceDays" />
+            </div>
+            <div class="col-md-3">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="dailyEntryHardFail" name="dailyEntryHardFail" value="true" checked="@dailyEntryHardFail" />
+                    <label class="form-check-label" for="dailyEntryHardFail">Block submit on violation</label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="dailyEntryIncludeWeekends" name="dailyEntryIncludeWeekends" value="true" checked="@dailyEntryIncludeWeekends" />
+                    <label class="form-check-label" for="dailyEntryIncludeWeekends">Include weekends</label>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <button class="btn btn-primary w-100" type="submit">Save Work Period Policy</button>
+            </div>
+        </form>
+        <p class="mt-2 mb-0 text-muted">Example: Monday start means Monday-Sunday periods. Sunday start means Sunday-Saturday periods.</p>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">Management Review Thresholds</div>
+    <div class="card-body">
+        <p class="mb-2">Configure when billing runs and adjusting entries require manager approval/co-sign.</p>
+        <form method="post" action="/api/admin/management-review-policy/set-form" class="row g-2 align-items-end">
+            <div class="col-md-6">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="requireBillingMgr" name="requireManagerApprovalForBillingAboveThreshold" value="true" checked="@requireManagerApprovalForBillingAboveThreshold" />
+                    <label class="form-check-label" for="requireBillingMgr">Require manager approval for billing at/above threshold</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Billing Approval Threshold</label>
+                <input type="number" min="0" step="0.01" class="form-control" name="billingManagerApprovalThreshold" value="@billingManagerApprovalThreshold" />
+            </div>
+            <div class="col-md-6">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="requireAdjustingMgr" name="requireManagerCoSignForAdjustingAboveThreshold" value="true" checked="@requireManagerCoSignForAdjustingAboveThreshold" />
+                    <label class="form-check-label" for="requireAdjustingMgr">Require manager co-sign for adjusting entries at/above threshold</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Adjusting Co-Sign Threshold</label>
+                <input type="number" min="0" step="0.01" class="form-control" name="adjustingManagerCoSignThreshold" value="@adjustingManagerCoSignThreshold" />
+            </div>
+            <div class="col-md-12">
+                <button class="btn btn-primary w-100" type="submit">Save Management Review Policy</button>
+            </div>
+            <div class="col-md-12"><hr /></div>
+            <div class="col-md-4">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="enablePeriodicInternalAuditAttestation" name="enablePeriodicInternalAuditAttestation" value="true" checked="@enablePeriodicInternalAuditAttestation" />
+                    <label class="form-check-label" for="enablePeriodicInternalAuditAttestation">Enable periodic internal audit attestations</label>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Internal Audit Cadence (Days)</label>
+                <input type="number" min="1" max="365" class="form-control" name="internalAuditCadenceDays" value="@internalAuditCadenceDays" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Audit Due Days After Period End</label>
+                <input type="number" min="0" max="120" class="form-control" name="internalAuditDueDaysAfterPeriodEnd" value="@internalAuditDueDaysAfterPeriodEnd" />
+            </div>
+            <div class="col-md-6">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="requireManagerInternalAuditAttestation" name="requireManagerInternalAuditAttestation" value="true" checked="@requireManagerInternalAuditAttestation" />
+                    <label class="form-check-label" for="requireManagerInternalAuditAttestation">Require manager attestation</label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="requireComplianceInternalAuditAttestation" name="requireComplianceInternalAuditAttestation" value="true" checked="@requireComplianceInternalAuditAttestation" />
+                    <label class="form-check-label" for="requireComplianceInternalAuditAttestation">Require compliance attestation</label>
+                </div>
+            </div>
+        </form>
+        <p class="mt-2 mb-0 text-muted">Set threshold to 0 to effectively disable threshold gating when checkbox is off.</p>
+    </div>
+</div>
+
+<p>Use <code>/admin/users</code> to reset per-user MFA/passkey enforcement flags.</p>
+<p>Use <code>/security/passkeys</code> to register and validate passkeys for a selected account.</p>
+
+@code {
+    private int weekStartDay = (int)DayOfWeek.Monday;
+    private int periodLengthDays = 7;
+    private bool dailyEntryRequired = true;
+    private int dailyEntryGraceDays = 1;
+    private bool dailyEntryHardFail = true;
+    private bool dailyEntryIncludeWeekends;
+    private bool requireManagerApprovalForBillingAboveThreshold = true;
+    private decimal billingManagerApprovalThreshold = 50000m;
+    private bool requireManagerCoSignForAdjustingAboveThreshold = true;
+    private decimal adjustingManagerCoSignThreshold = 10000m;
+    private bool enablePeriodicInternalAuditAttestation = true;
+    private int internalAuditCadenceDays = 30;
+    private int internalAuditDueDaysAfterPeriodEnd = 10;
+    private bool requireManagerInternalAuditAttestation = true;
+    private bool requireComplianceInternalAuditAttestation = true;
+    private string? message;
+    private string? error;
+
+    private static readonly List<(int Value, string Text)> dayOptions =
+    [
+        ((int)DayOfWeek.Sunday, "Sunday"),
+        ((int)DayOfWeek.Monday, "Monday"),
+        ((int)DayOfWeek.Tuesday, "Tuesday"),
+        ((int)DayOfWeek.Wednesday, "Wednesday"),
+        ((int)DayOfWeek.Thursday, "Thursday"),
+        ((int)DayOfWeek.Friday, "Friday"),
+        ((int)DayOfWeek.Saturday, "Saturday")
+    ];
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            var config = Store.WorkPeriodConfigurations.SingleOrDefault(x => x.TenantId == TenantContext.TenantId);
+            weekStartDay = config?.WeekStartDay ?? (int)DayOfWeek.Monday;
+            periodLengthDays = config?.PeriodLengthDays ?? 7;
+            dailyEntryRequired = config?.DailyEntryRequired ?? true;
+            dailyEntryGraceDays = config?.DailyEntryGraceDays ?? 1;
+            dailyEntryHardFail = config?.DailyEntryHardFail ?? true;
+            dailyEntryIncludeWeekends = config?.DailyEntryIncludeWeekends ?? false;
+            var managementPolicy = Store.ManagementReviewPolicies.SingleOrDefault(x => x.TenantId == TenantContext.TenantId);
+            requireManagerApprovalForBillingAboveThreshold = managementPolicy?.RequireManagerApprovalForBillingAboveThreshold ?? true;
+            billingManagerApprovalThreshold = managementPolicy?.BillingManagerApprovalThreshold ?? 50000m;
+            requireManagerCoSignForAdjustingAboveThreshold = managementPolicy?.RequireManagerCoSignForAdjustingAboveThreshold ?? true;
+            adjustingManagerCoSignThreshold = managementPolicy?.AdjustingManagerCoSignThreshold ?? 10000m;
+            enablePeriodicInternalAuditAttestation = managementPolicy?.EnablePeriodicInternalAuditAttestation ?? true;
+            internalAuditCadenceDays = managementPolicy?.InternalAuditCadenceDays ?? 30;
+            internalAuditDueDaysAfterPeriodEnd = managementPolicy?.InternalAuditDueDaysAfterPeriodEnd ?? 10;
+            requireManagerInternalAuditAttestation = managementPolicy?.RequireManagerInternalAuditAttestation ?? true;
+            requireComplianceInternalAuditAttestation = managementPolicy?.RequireComplianceInternalAuditAttestation ?? true;
+
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+            if (query.ContainsKey("saved"))
+            {
+                message = "Work period boundary updated.";
+            }
+            else if (query.ContainsKey("managementSaved"))
+            {
+                message = "Management review policy updated.";
+            }
+            else if (query.ContainsKey("error"))
+            {
+                error = "Unable to update work period boundary.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private string ComputedEndDayText()
+    {
+        var endDay = (weekStartDay + 6) % 7;
+        return dayOptions.First(x => x.Value == endDay).Text;
+    }
+}

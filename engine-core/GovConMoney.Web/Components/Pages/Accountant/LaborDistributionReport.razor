@@ -1,0 +1,29 @@
+@page "/accountant/reports/labor"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.ReportingService Reporting
+
+<h3>Accountant - Labor Distribution Report</h3>
+<p>
+    API Export:
+    <a href="/api/reports/labor?format=json" target="_blank">JSON</a> |
+    <a href="/api/reports/labor?format=csv" target="_blank">CSV</a>
+</p>
+
+<table class="table mt-2">
+    <thead><tr><th>Employee</th><th>Charge Code</th><th>Minutes</th><th>Labor Dollars</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr><td>@row.Employee</td><td>@row.ChargeCode</td><td>@row.Minutes</td><td>@row.LaborDollars</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private IReadOnlyList<GovConMoney.Application.Models.LaborDistributionRow> rows = [];
+
+    protected override void OnInitialized()
+    {
+        rows = Reporting.LaborDistribution();
+    }
+}

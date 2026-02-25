@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="GovConMoney.Application/GovConMoney.Application.csproj" />
+  <Project Path="GovConMoney.Domain/GovConMoney.Domain.csproj" />
+  <Project Path="GovConMoney.Infrastructure/GovConMoney.Infrastructure.csproj" />
+  <Project Path="GovConMoney.Tests/GovConMoney.Tests.csproj" />
+  <Project Path="GovConMoney.Web/GovConMoney.Web.csproj" />
+</Solution>

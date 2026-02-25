@@ -1,0 +1,40 @@
+@page "/admin/audit"
+@attribute [Authorize(Roles = "Admin")]
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+
+<h3>Admin - Audit Dashboard</h3>
+
+<label>Filter by entity type:</label>
+<input class="form-control mb-2" @bind="entityType" />
+
+<table class="table">
+    <thead><tr><th>When (UTC)</th><th>Actor</th><th>Event</th><th>Entity</th><th>Reason</th></tr></thead>
+    <tbody>
+    @foreach (var evt in FilteredEvents())
+    {
+        var actor = Store.Users.FirstOrDefault(x => x.Id == evt.ActorUserId)?.UserName ?? evt.ActorUserId.ToString();
+        <tr>
+            <td>@evt.OccurredAtUtc</td>
+            <td>@actor</td>
+            <td>@evt.EventType</td>
+            <td>@evt.EntityType</td>
+            <td>@evt.ReasonForChange</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private string entityType = string.Empty;
+
+    private IEnumerable<GovConMoney.Domain.Entities.AuditEvent> FilteredEvents()
+    {
+        var query = Store.AuditEvents.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(entityType))
+        {
+            query = query.Where(x => x.EntityType.Contains(entityType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return query.OrderByDescending(x => x.OccurredAtUtc).Take(200);
+    }
+}

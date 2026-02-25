@@ -1,0 +1,258 @@
+@page "/compliance/assignments"
+@attribute [Authorize(Roles = "Compliance")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject ComplianceService ComplianceService
+
+<h3>Compliance - Assignments and Supervisors</h3>
+<p>API view: <a href="/api/compliance/assignments-view" target="_blank">assignments</a> | <a href="/api/compliance/supervisors-view" target="_blank">supervisors</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<h4>Create Assignment</h4>
+<form class="mb-3" @onsubmit="CreateAssignmentAsync" @onsubmit:preventDefault="true">
+    <label>User</label>
+    <select class="form-select mb-1" @bind="selectedUserId">
+        @foreach (var user in employees)
+        {
+            <option value="@user.Id">@user.UserName</option>
+        }
+    </select>
+    <label>Charge Code</label>
+    <select class="form-select mb-1" @bind="selectedChargeCodeId">
+        @foreach (var cc in chargeCodes)
+        {
+            <option value="@cc.Id">@cc.Code</option>
+        }
+    </select>
+    <label>Effective Start</label>
+    <input type="date" class="form-control mb-1" @bind="assignmentStartDate" />
+    <label>Effective End</label>
+    <input type="date" class="form-control mb-1" @bind="assignmentEndDate" />
+    <div class="form-check mb-2 mt-1">
+        <input class="form-check-input" type="checkbox" @bind="assignmentOverrideAllowed" id="overrideAllowed" />
+        <label class="form-check-label" for="overrideAllowed">Allow out-of-window supervisor override</label>
+    </div>
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Create Assignment</button>
+</form>
+
+<table class="table">
+    <thead><tr><th>User</th><th>Charge Code</th><th>Start</th><th>End</th><th>Override Allowed</th></tr></thead>
+    <tbody>
+    @foreach (var a in assignments)
+    {
+        <tr><td>@a.UserName</td><td>@a.ChargeCode</td><td>@a.EffectiveStartDate</td><td>@a.EffectiveEndDate</td><td>@a.SupervisorOverrideAllowed</td></tr>
+    }
+    </tbody>
+</table>
+
+<h4>Set Supervisor Relationship</h4>
+<form class="mb-3" @onsubmit="SetSupervisorAsync" @onsubmit:preventDefault="true">
+    <label>Employee</label>
+    <select class="form-select mb-1" @bind="selectedEmployeeUserId">
+        @foreach (var user in employees)
+        {
+            <option value="@user.Id">@user.UserName</option>
+        }
+    </select>
+    <label>Supervisor</label>
+    <select class="form-select mb-1" @bind="selectedSupervisorUserId">
+        @foreach (var supervisor in supervisorsLookup)
+        {
+            <option value="@supervisor.Id">@supervisor.UserName</option>
+        }
+    </select>
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Set Supervisor</button>
+</form>
+
+<h4>Supervisor Relationships</h4>
+<table class="table">
+    <thead><tr><th>Employee</th><th>Supervisor</th></tr></thead>
+    <tbody>
+    @foreach (var p in supervisors)
+    {
+        <tr><td>@p.Employee</td><td>@p.Supervisor</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<AssignmentRow> assignments = [];
+    private List<SupervisorRow> supervisors = [];
+    private List<UserLookup> employees = [];
+    private List<UserLookup> supervisorsLookup = [];
+    private List<ChargeCodeLookup> chargeCodes = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private Guid selectedUserId;
+    private Guid selectedChargeCodeId;
+    private DateOnly assignmentStartDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly assignmentEndDate = DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(3));
+    private bool assignmentOverrideAllowed;
+    private Guid selectedEmployeeUserId;
+    private Guid selectedSupervisorUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            var users = Repository.Query<AppUser>(tenantId).ToList();
+            var profiles = Repository.Query<PersonnelProfile>(tenantId).ToList();
+            var assignmentsData = Repository.Query<Assignment>(tenantId).ToList();
+            var chargeCodeData = Repository.Query<ChargeCode>(tenantId).ToList();
+
+            employees = users
+                .Where(x => !x.Roles.Contains("Admin", StringComparer.OrdinalIgnoreCase))
+                .OrderBy(x => x.UserName)
+                .Select(x => new UserLookup { Id = x.Id, UserName = x.UserName, Roles = x.Roles.ToList() })
+                .ToList();
+
+            supervisorsLookup = users
+                .Where(x => x.Roles.Contains("Supervisor", StringComparer.OrdinalIgnoreCase))
+                .OrderBy(x => x.UserName)
+                .Select(x => new UserLookup { Id = x.Id, UserName = x.UserName, Roles = x.Roles.ToList() })
+                .ToList();
+
+            var userById = users.ToDictionary(x => x.Id);
+            var chargeCodeById = chargeCodeData.ToDictionary(x => x.Id);
+
+            assignments = assignmentsData
+                .Select(a => new AssignmentRow
+                {
+                    UserName = userById.TryGetValue(a.UserId, out var u) ? u.UserName : "(unknown)",
+                    ChargeCode = chargeCodeById.TryGetValue(a.ChargeCodeId, out var cc) ? cc.Code : "(unknown)",
+                    EffectiveStartDate = a.EffectiveStartDate,
+                    EffectiveEndDate = a.EffectiveEndDate,
+                    SupervisorOverrideAllowed = a.SupervisorOverrideAllowed
+                })
+                .OrderBy(x => x.UserName)
+                .ThenBy(x => x.ChargeCode)
+                .ToList();
+
+            supervisors = profiles
+                .Select(p => new SupervisorRow
+                {
+                    Employee = userById.TryGetValue(p.UserId, out var employee) ? employee.UserName : "(unknown)",
+                    Supervisor = p.SupervisorUserId.HasValue && userById.TryGetValue(p.SupervisorUserId.Value, out var supervisor)
+                        ? supervisor.UserName
+                        : "(none)"
+                })
+                .OrderBy(x => x.Employee)
+                .ToList();
+
+            chargeCodes = chargeCodeData
+                .OrderBy(x => x.Code)
+                .Select(x => new ChargeCodeLookup { Id = x.Id, Code = x.Code })
+                .ToList();
+
+            selectedUserId = employees.FirstOrDefault()?.Id ?? Guid.Empty;
+            selectedEmployeeUserId = employees.FirstOrDefault()?.Id ?? Guid.Empty;
+            selectedSupervisorUserId = supervisorsLookup.FirstOrDefault()?.Id ?? Guid.Empty;
+            selectedChargeCodeId = chargeCodes.FirstOrDefault()?.Id ?? Guid.Empty;
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CreateAssignmentAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            ComplianceService.AssignUserToChargeCode(selectedUserId, selectedChargeCodeId, assignmentStartDate, assignmentEndDate, assignmentOverrideAllowed);
+            message = "Assignment saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SetSupervisorAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            ComplianceService.SetSupervisor(selectedEmployeeUserId, selectedSupervisorUserId);
+            message = "Supervisor relationship saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+
+    private sealed class AssignmentRow
+    {
+        public string UserName { get; set; } = string.Empty;
+        public string ChargeCode { get; set; } = string.Empty;
+        public DateOnly EffectiveStartDate { get; set; }
+        public DateOnly EffectiveEndDate { get; set; }
+        public bool SupervisorOverrideAllowed { get; set; }
+    }
+
+    private sealed class SupervisorRow
+    {
+        public string Employee { get; set; } = string.Empty;
+        public string Supervisor { get; set; } = string.Empty;
+    }
+
+    private sealed class UserLookup
+    {
+        public Guid Id { get; set; }
+        public string UserName { get; set; } = string.Empty;
+        public List<string> Roles { get; set; } = [];
+    }
+
+    private sealed class ChargeCodeLookup
+    {
+        public Guid Id { get; set; }
+        public string Code { get; set; } = string.Empty;
+    }
+}

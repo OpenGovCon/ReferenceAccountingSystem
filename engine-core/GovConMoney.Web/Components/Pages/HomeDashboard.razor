@@ -1,0 +1,81 @@
+@page "/home"
+@attribute [Authorize]
+
+<PageTitle>Home Dashboard</PageTitle>
+
+<h2>Home Dashboard</h2>
+<p>Select your workspace.</p>
+
+<div class="row g-3">
+    <AuthorizeView Roles="Admin">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Admin Dashboard</h5>
+                    <p class="card-text">User governance, security policies, audit and enrollment approvals.</p>
+                    <a class="btn btn-sm btn-primary" href="/admin">Open Admin</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Compliance">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Compliance Dashboard</h5>
+                    <p class="card-text">Contracts hierarchy, assignments, periods, allowability and forensics.</p>
+                    <a class="btn btn-sm btn-primary" href="/compliance">Open Compliance</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="TimeReporter">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Time Reporter Dashboard</h5>
+                    <p class="card-text">Draft, edit, submit, corrections, work notes and weekly status.</p>
+                    <a class="btn btn-sm btn-primary" href="/timereporter">Open Time Reporter</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Supervisor">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Supervisor Dashboard</h5>
+                    <p class="card-text">Timesheet approvals and out-of-window charge approvals.</p>
+                    <a class="btn btn-sm btn-primary" href="/supervisor">Open Supervisor</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Accountant">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Accountant Dashboard</h5>
+                    <p class="card-text">Labor, project, compliance and audit reporting exports.</p>
+                    <a class="btn btn-sm btn-primary" href="/accountant">Open Accountant</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Manager">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Manager Dashboard</h5>
+                    <p class="card-text">Management review workspace for period close, indirect rates, billing, and adjusting entries.</p>
+                    <a class="btn btn-sm btn-primary" href="/manager">Open Manager</a>
+                </div>
+            </div>
+        </div>
+    </AuthorizeView>
+</div>

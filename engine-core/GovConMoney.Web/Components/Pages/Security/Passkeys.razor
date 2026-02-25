@@ -1,0 +1,49 @@
+@page "/security/passkeys"
+@attribute [Authorize]
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h3>Security - Passkeys</h3>
+
+<p>Register passkey credentials for the current signed-in account.</p>
+<p>If you need to setup or re-enroll MFA, use <a href="/security/mfa-enroll">MFA Enrollment</a>.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<button class="btn btn-success mt-2" @onclick="RegisterPasskey">Register Passkey (WebAuthn)</button>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success mt-2">@message</div>
+}
+
+@code {
+    private string? error;
+    private string? message;
+
+    protected override void OnInitialized()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        error = query.TryGetValue("error", out var errorValue) ? errorValue.ToString() : null;
+        message = query.TryGetValue("saved", out var saved) && saved == "1" ? "Passkey was registered." : null;
+    }
+
+    private async Task RegisterPasskey()
+    {
+        error = null;
+        message = null;
+        try
+        {
+            await JS.InvokeVoidAsync("govConPasskeys.register");
+            message = "Passkey registered successfully.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

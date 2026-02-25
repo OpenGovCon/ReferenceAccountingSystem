@@ -1,0 +1,206 @@
+@page "/timereporter/corrections"
+@attribute [Authorize(Roles = "TimeReporter")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Models
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject TimesheetService TimesheetService
+
+<h3>Time Reporter - Corrections and Versions</h3>
+<p>API view: <a href="/api/timereporter/corrections-view" target="_blank">corrections</a> | <a href="/api/timereporter/status-view" target="_blank">timesheets</a> | <a href="/api/timereporter/versions-view" target="_blank">versions</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<h4>Request Correction</h4>
+<form class="mb-3" @onsubmit="RequestCorrectionAsync" @onsubmit:preventDefault="true">
+    <label>Timesheet</label>
+    <select class="form-select mb-1" @bind="requestTimesheetId">
+        @foreach (var t in timesheets)
+        {
+            <option value="@t.Id">@t.Id (@t.PeriodStart - @t.PeriodEnd)</option>
+        }
+    </select>
+    <input class="form-control mb-1" placeholder="Reason for correction" @bind="requestReason" />
+    <button class="btn btn-primary" type="submit" disabled="@isBusy">Request Correction</button>
+</form>
+
+<h4>Apply Correction (single-line quick apply)</h4>
+<form class="mb-3" @onsubmit="ApplyCorrectionAsync" @onsubmit:preventDefault="true">
+    <label>Timesheet</label>
+    <select class="form-select mb-1" @bind="applyTimesheetId">
+        @foreach (var t in timesheets)
+        {
+            <option value="@t.Id">@t.Id</option>
+        }
+    </select>
+    <label>Correction Request</label>
+    <select class="form-select mb-1" @bind="applyCorrectionRequestId">
+        @foreach (var c in corrections)
+        {
+            <option value="@c.Id">@c.Id</option>
+        }
+    </select>
+    <label>Charge Code</label>
+    <select class="form-select mb-1" @bind="applyChargeCodeId">
+        @foreach (var cc in chargeCodes)
+        {
+            <option value="@cc.Id">@cc.Code</option>
+        }
+    </select>
+    <input type="date" class="form-control mb-1" @bind="applyWorkDate" />
+    <input type="number" class="form-control mb-1" @bind="applyMinutes" />
+    <input class="form-control mb-1" @bind="applyComment" />
+    <input class="form-control mb-1" @bind="applyReason" />
+    <button class="btn btn-warning" type="submit" disabled="@isBusy">Apply Correction</button>
+</form>
+
+<h4>Correction Requests</h4>
+<table class="table">
+    <thead><tr><th>Timesheet</th><th>Reason</th><th>Approved</th><th>Requested At</th></tr></thead>
+    <tbody>
+    @foreach (var c in corrections)
+    {
+        <tr><td>@c.TimesheetId</td><td>@c.ReasonForChange</td><td>@c.Approved</td><td>@c.RequestedAtUtc</td></tr>
+    }
+    </tbody>
+</table>
+
+<h4>Version Snapshots</h4>
+<table class="table">
+    <thead><tr><th>Timesheet</th><th>Version</th><th>Created</th></tr></thead>
+    <tbody>
+    @foreach (var v in versions)
+    {
+        <tr><td>@v.TimesheetId</td><td>@v.VersionNumber</td><td>@v.CreatedAtUtc</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<Timesheet> timesheets = [];
+    private List<CorrectionRequest> corrections = [];
+    private List<TimesheetVersion> versions = [];
+    private List<ChargeCode> chargeCodes = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private Guid requestTimesheetId;
+    private string requestReason = string.Empty;
+    private Guid applyTimesheetId;
+    private Guid applyCorrectionRequestId;
+    private Guid applyChargeCodeId;
+    private DateOnly applyWorkDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private int applyMinutes = 60;
+    private string applyComment = "corrected entry";
+    private string applyReason = "approved correction";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            var userId = TenantContext.UserId;
+            timesheets = Repository.Query<Timesheet>(tenantId)
+                .Where(x => x.UserId == userId)
+                .OrderByDescending(x => x.PeriodEnd)
+                .ToList();
+
+            var timesheetIds = timesheets.Select(x => x.Id).ToHashSet();
+            corrections = Repository.Query<CorrectionRequest>(tenantId)
+                .Where(x => timesheetIds.Contains(x.TimesheetId))
+                .OrderByDescending(x => x.RequestedAtUtc)
+                .ToList();
+            versions = Repository.Query<TimesheetVersion>(tenantId)
+                .Where(x => timesheetIds.Contains(x.TimesheetId))
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .ToList();
+            chargeCodes = Repository.Query<ChargeCode>(tenantId)
+                .OrderBy(x => x.Code)
+                .ToList();
+
+            requestTimesheetId = timesheets.FirstOrDefault()?.Id ?? Guid.Empty;
+            applyTimesheetId = timesheets.FirstOrDefault()?.Id ?? Guid.Empty;
+            applyCorrectionRequestId = corrections.FirstOrDefault()?.Id ?? Guid.Empty;
+            applyChargeCodeId = chargeCodes.FirstOrDefault()?.Id ?? Guid.Empty;
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RequestCorrectionAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            TimesheetService.RequestCorrection(new RequestCorrectionRequest(requestTimesheetId, requestReason));
+            requestReason = string.Empty;
+            message = "Correction requested.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ApplyCorrectionAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var lines = new List<AddTimesheetLineRequest>
+            {
+                new(applyWorkDate, applyChargeCodeId, applyMinutes, CostType.Direct, applyComment)
+            };
+            TimesheetService.ApplyCorrection(new ApplyCorrectionRequest(applyTimesheetId, applyCorrectionRequestId, lines, applyReason));
+            message = "Correction applied.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+}

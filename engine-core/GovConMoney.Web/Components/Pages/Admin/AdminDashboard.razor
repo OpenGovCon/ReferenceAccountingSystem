@@ -1,0 +1,12 @@
+@page "/admin"
+@attribute [Authorize(Roles = "Admin")]
+
+<h2>Admin Dashboard</h2>
+<p>Stub dashboard for admin role.</p>
+
+<ul>
+    <li><a href="/admin/users">User Management</a></li>
+    <li><a href="/admin/security">Security Policies</a></li>
+    <li><a href="/admin/audit">Audit Dashboard</a></li>
+    <li><a href="/admin/enrollments">Enrollment Approvals</a></li>
+</ul>

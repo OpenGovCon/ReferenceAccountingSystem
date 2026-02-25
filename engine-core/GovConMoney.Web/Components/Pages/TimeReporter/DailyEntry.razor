@@ -1,0 +1,1071 @@
+@page "/timereporter/daily"
+@page "/timereporter/timecards"
+@attribute [Authorize(Roles = "TimeReporter")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Models
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject NavigationManager Nav
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject TimesheetService TimesheetService
+
+<h3>Time Reporter - Time Cards</h3>
+<div class="alert alert-info">
+    <strong>Draft behavior:</strong> A <code>Draft</code> time card is automatically saved as you create or edit lines, expenses, notes, and weekly status.
+</div>
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<div class="card mb-3">
+    <div class="card-header">New Time Card</div>
+    <div class="card-body">
+        <form class="row g-2 align-items-end" @onsubmit="CreateDraftAsync" @onsubmit:preventDefault="true">
+            <div class="col-md-4">
+                <label class="form-label">Period Start</label>
+                <input type="date" class="form-control" @bind="newPeriodStart" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Period End</label>
+                <input type="date" class="form-control" @bind="newPeriodEnd" />
+            </div>
+            <div class="col-md-4">
+                <button class="btn btn-primary w-100" type="submit" disabled="@isBusy">Create Draft Time Card</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@foreach (var card in timesheets)
+{
+    var isActive = activeTimesheetId == card.Id;
+    var isDraft = card.Status == GovConMoney.Domain.Enums.TimesheetStatus.Draft;
+
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <strong>@card.PeriodStart - @card.PeriodEnd</strong>
+                <span class="ms-2 badge text-bg-secondary">@card.Status</span>
+                <span class="ms-2 text-muted">Version @card.VersionNumber</span>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SelectCardAsync(card.Id)">@(isActive ? "Open" : "View")</button>
+        </div>
+
+        @if (isActive)
+        {
+            <div class="card-body">
+                @if (!string.IsNullOrWhiteSpace(error))
+                {
+                    <div class="alert alert-danger">@error</div>
+                }
+
+                @if (isDraft)
+                {
+                    <div class="mb-3">
+                        <button class="btn btn-warning" type="button" @onclick="SubmitTimesheetAsync" disabled="@isBusy">Submit Time Card</button>
+                    </div>
+                }
+
+                <h5>Time Lines</h5>
+                @if (isDraft)
+                {
+                    @if (SelectedLineContractRequiresClinTracking())
+                    {
+                        <div class="alert alert-secondary py-1">
+                            This contract requires CLIN tracking. Select Contract -> Task Order -> CLIN -> WBS -> Charge Code.
+                        </div>
+                    }
+                    <form class="row g-2 align-items-end mb-2" @onsubmit="AddLineAsync" @onsubmit:preventDefault="true">
+                        <div class="col-md-2">
+                            <label class="form-label">Date</label>
+                            <input type="date" class="form-control" @bind="newLineWorkDate" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Contract</label>
+                            <select class="form-select" value="@newLineContractId" @onchange="OnNewLineContractChanged">
+                                @foreach (var c in contracts)
+                                {
+                                    <option value="@c.Id">@c.ContractNumber</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Task Order</label>
+                            <select class="form-select" value="@newLineTaskOrderId" @onchange="OnNewLineTaskOrderChanged">
+                                @foreach (var t in LineTaskOrderOptions())
+                                {
+                                    <option value="@t.Id">@t.Number</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">CLIN</label>
+                            <select class="form-select" value="@newLineClinId" @onchange="OnNewLineClinChanged">
+                                @foreach (var c in LineClinOptions())
+                                {
+                                    <option value="@c.Id">@c.Number</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">WBS</label>
+                            <select class="form-select" value="@newLineWbsId" @onchange="OnNewLineWbsChanged">
+                                @foreach (var w in LineWbsOptions())
+                                {
+                                    <option value="@w.Id">@w.Code</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Charge Code</label>
+                            <select class="form-select" value="@newLineChargeCodeId" @onchange="OnNewLineChargeCodeChanged" disabled="@(newLineEntryType != TimesheetEntryType.Work)">
+                                @foreach (var cc in LineChargeCodeOptions())
+                                {
+                                    <option value="@cc.Id">@cc.Code (@cc.CostType)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Entry Type</label>
+                            <select class="form-select" value="@newLineEntryType" @onchange="OnNewLineEntryTypeChanged">
+                                <option value="@TimesheetEntryType.Work">Work</option>
+                                <option value="@TimesheetEntryType.NoTime">No Time</option>
+                                <option value="@TimesheetEntryType.Pto">PTO</option>
+                                <option value="@TimesheetEntryType.Holiday">Holiday</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Minutes</label>
+                            <input type="number" class="form-control" @bind="newLineMinutes" disabled="@(newLineEntryType == TimesheetEntryType.NoTime)" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Comment</label>
+                            <input class="form-control" @bind="newLineComment" />
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-success w-100" type="submit" disabled="@isBusy">Add</button>
+                        </div>
+                    </form>
+                }
+
+                <table class="table table-sm mb-4">
+                    <thead>
+                        <tr><th>Date</th><th>Type</th><th>Charge Code</th><th>Minutes</th><th>Comment</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var line in editableLines)
+                    {
+                        <tr>
+                            <td><input type="date" class="form-control form-control-sm" @bind="line.WorkDate" disabled="@(!isDraft)" /></td>
+                            <td>
+                                <select class="form-select form-select-sm" @bind="line.EntryType" disabled="@(!isDraft)">
+                                    <option value="@TimesheetEntryType.Work">Work</option>
+                                    <option value="@TimesheetEntryType.NoTime">No Time</option>
+                                    <option value="@TimesheetEntryType.Pto">PTO</option>
+                                    <option value="@TimesheetEntryType.Holiday">Holiday</option>
+                                </select>
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm" @bind="line.ChargeCodeId" disabled="@(!isDraft || line.EntryType != TimesheetEntryType.Work)">
+                                    @foreach (var cc in chargeCodes.Where(x => x.IsActive || x.Id == line.ChargeCodeId))
+                                    {
+                                        <option value="@cc.Id">@cc.Code (@cc.CostType)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input type="number" class="form-control form-control-sm" @bind="line.Minutes" disabled="@(!isDraft || line.EntryType == TimesheetEntryType.NoTime)" /></td>
+                            <td><input class="form-control form-control-sm" @bind="line.Comment" disabled="@(!isDraft)" /></td>
+                            <td>
+                                @if (isDraft)
+                                {
+                                    <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SaveLineAsync(line)" disabled="@isBusy">Save</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+
+                <h6>Future PTO Approvals</h6>
+                @if (futurePtoStatuses.Count == 0)
+                {
+                    <div class="text-muted mb-3">No future PTO entries on this time card.</div>
+                }
+                else
+                {
+                    <table class="table table-sm mb-4">
+                        <thead>
+                            <tr><th>Date</th><th>Minutes</th><th>Status</th><th>Last Request</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var pto in futurePtoStatuses.OrderBy(x => x.WorkDate))
+                        {
+                            <tr>
+                                <td>@pto.WorkDate</td>
+                                <td>@pto.Minutes</td>
+                                <td>
+                                    @if (pto.IsApproved)
+                                    {
+                                        <span class="badge text-bg-success">Approved</span>
+                                    }
+                                    else if (pto.HasRequest)
+                                    {
+                                        <span class="badge text-bg-warning">Requested</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-secondary">Not Requested</span>
+                                    }
+                                </td>
+                                <td>@(pto.RequestedAtUtc?.ToString("u") ?? "-")</td>
+                                <td>
+                                    @if (!pto.IsApproved)
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => RequestFuturePtoApprovalAsync(pto.WorkDate)" disabled="@isBusy">
+                                            @(pto.HasRequest ? "Request Again" : "Request Approval")
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+
+                <h5>Expenses</h5>
+                @if (isDraft)
+                {
+                    @if (SelectedExpenseContractRequiresClinTracking())
+                    {
+                        <div class="alert alert-secondary py-1">
+                            This contract requires CLIN tracking. Select Contract -> Task Order -> CLIN -> WBS -> Charge Code.
+                        </div>
+                    }
+                    <form class="row g-2 align-items-end mb-2" @onsubmit="AddExpenseAsync" @onsubmit:preventDefault="true">
+                        <div class="col-md-2">
+                            <label class="form-label">Date</label>
+                            <input type="date" class="form-control" @bind="newExpenseDate" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Contract</label>
+                            <select class="form-select" value="@newExpenseContractId" @onchange="OnNewExpenseContractChanged">
+                                @foreach (var c in contracts)
+                                {
+                                    <option value="@c.Id">@c.ContractNumber</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Task Order</label>
+                            <select class="form-select" value="@newExpenseTaskOrderId" @onchange="OnNewExpenseTaskOrderChanged">
+                                @foreach (var t in ExpenseTaskOrderOptions())
+                                {
+                                    <option value="@t.Id">@t.Number</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">CLIN</label>
+                            <select class="form-select" value="@newExpenseClinId" @onchange="OnNewExpenseClinChanged">
+                                @foreach (var c in ExpenseClinOptions())
+                                {
+                                    <option value="@c.Id">@c.Number</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">WBS</label>
+                            <select class="form-select" value="@newExpenseWbsId" @onchange="OnNewExpenseWbsChanged">
+                                @foreach (var w in ExpenseWbsOptions())
+                                {
+                                    <option value="@w.Id">@w.Code</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Charge Code</label>
+                            <select class="form-select" value="@newExpenseChargeCodeId" @onchange="OnNewExpenseChargeCodeChanged">
+                                @foreach (var cc in ExpenseChargeCodeOptions())
+                                {
+                                    <option value="@cc.Id">@cc.Code</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Amount</label>
+                            <input type="number" step="0.01" class="form-control" @bind="newExpenseAmount" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Category</label>
+                            <input class="form-control" @bind="newExpenseCategory" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Description</label>
+                            <input class="form-control" @bind="newExpenseDescription" />
+                        </div>
+                        <div class="col-md-1">
+                            <button class="btn btn-success w-100" type="submit" disabled="@isBusy">Add</button>
+                        </div>
+                    </form>
+                }
+
+                <table class="table table-sm mb-4">
+                    <thead>
+                        <tr><th>Date</th><th>Charge Code</th><th>Amount</th><th>Category</th><th>Description</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var expense in editableExpenses)
+                    {
+                        <tr>
+                            <td><input type="date" class="form-control form-control-sm" @bind="expense.ExpenseDate" disabled="@(!isDraft)" /></td>
+                            <td>
+                                <select class="form-select form-select-sm" @bind="expense.ChargeCodeId" disabled="@(!isDraft)">
+                                    @foreach (var cc in chargeCodes.Where(x => x.IsActive || x.Id == expense.ChargeCodeId))
+                                    {
+                                        <option value="@cc.Id">@cc.Code (@cc.CostType)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input type="number" step="0.01" class="form-control form-control-sm" @bind="expense.Amount" disabled="@(!isDraft)" /></td>
+                            <td><input class="form-control form-control-sm" @bind="expense.Category" disabled="@(!isDraft)" /></td>
+                            <td><input class="form-control form-control-sm" @bind="expense.Description" disabled="@(!isDraft)" /></td>
+                            <td>@expense.Status</td>
+                            <td>
+                                @if (isDraft)
+                                {
+                                    <div class="d-flex gap-1">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SaveExpenseAsync(expense)" disabled="@isBusy || expense.Status == ExpenseStatus.Voided">Save</button>
+                                        <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => DeleteExpenseAsync(expense.Id)" disabled="@isBusy">Delete</button>
+                                    </div>
+                                    <input class="form-control form-control-sm mt-1" placeholder="Void reason" @bind="expense.VoidReasonInput" />
+                                    <button class="btn btn-sm btn-outline-secondary mt-1" type="button" @onclick="() => VoidExpenseAsync(expense)" disabled="@isBusy || expense.Status == ExpenseStatus.Voided">Void</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+
+                <h5>Work Notes</h5>
+                @if (isDraft)
+                {
+                    <form class="mb-3" @onsubmit="AddWorkNoteAsync" @onsubmit:preventDefault="true">
+                        <textarea class="form-control mb-2" rows="3" placeholder="Add detailed work notes for this period" @bind="newWorkNote"></textarea>
+                        <button class="btn btn-outline-secondary" type="submit" disabled="@isBusy">Add Work Note</button>
+                    </form>
+                }
+
+                <table class="table table-sm mb-4">
+                    <thead><tr><th>Created</th><th>Note</th></tr></thead>
+                    <tbody>
+                    @foreach (var note in workNotes)
+                    {
+                        <tr><td>@note.CreatedAtUtc</td><td>@note.Note</td></tr>
+                    }
+                    </tbody>
+                </table>
+
+                <h5>Weekly Status Narrative</h5>
+                <form class="mb-2" @onsubmit="SaveWeeklyStatusAsync" @onsubmit:preventDefault="true">
+                    <textarea class="form-control mb-2" rows="5" @bind="weeklyStatusNarrative" disabled="@(!isDraft)"></textarea>
+                    @if (isDraft)
+                    {
+                        <button class="btn btn-outline-primary" type="submit" disabled="@isBusy">Save Weekly Status</button>
+                    }
+                </form>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private Guid? activeTimesheetId;
+    private List<Timesheet> timesheets = [];
+    private List<Contract> contracts = [];
+    private List<TaskOrder> taskOrders = [];
+    private List<Clin> clins = [];
+    private List<WbsNode> wbsNodes = [];
+    private List<ChargeCode> chargeCodes = [];
+    private List<EditableLine> editableLines = [];
+    private List<FuturePtoStatusRow> futurePtoStatuses = [];
+    private List<EditableExpense> editableExpenses = [];
+    private List<TimesheetWorkNote> workNotes = [];
+    private string? weeklyStatusNarrative;
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    private DateOnly newPeriodStart = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-7));
+    private DateOnly newPeriodEnd = DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private DateOnly newLineWorkDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private Guid newLineContractId;
+    private Guid newLineTaskOrderId;
+    private Guid newLineClinId;
+    private Guid newLineWbsId;
+    private Guid newLineChargeCodeId;
+    private TimesheetEntryType newLineEntryType = TimesheetEntryType.Work;
+    private int newLineMinutes = 60;
+    private string newLineComment = "work log";
+
+    private DateOnly newExpenseDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private Guid newExpenseContractId;
+    private Guid newExpenseTaskOrderId;
+    private Guid newExpenseClinId;
+    private Guid newExpenseWbsId;
+    private Guid newExpenseChargeCodeId;
+    private decimal newExpenseAmount = 0m;
+    private string newExpenseCategory = "Travel";
+    private string newExpenseDescription = string.Empty;
+
+    private string newWorkNote = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ParseQuery();
+        await ReloadAsync();
+    }
+
+    private void ParseQuery()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("timesheetId", out var value) && Guid.TryParse(value, out var parsed))
+        {
+            activeTimesheetId = parsed;
+        }
+
+        if (query.TryGetValue("error", out var errorValue))
+        {
+            error = errorValue.ToString();
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            var userId = TenantContext.UserId;
+
+            timesheets = Repository.Query<Timesheet>(tenantId)
+                .Where(x => x.UserId == userId)
+                .OrderByDescending(x => x.PeriodEnd)
+                .ToList();
+
+            contracts = Repository.Query<Contract>(tenantId)
+                .OrderBy(x => x.ContractNumber)
+                .ToList();
+            taskOrders = Repository.Query<TaskOrder>(tenantId)
+                .OrderBy(x => x.Number)
+                .ToList();
+            clins = Repository.Query<Clin>(tenantId)
+                .OrderBy(x => x.Number)
+                .ToList();
+            wbsNodes = Repository.Query<WbsNode>(tenantId)
+                .OrderBy(x => x.Code)
+                .ToList();
+            chargeCodes = Repository.Query<ChargeCode>(tenantId)
+                .OrderBy(x => x.Code)
+                .ToList();
+
+            if (!activeTimesheetId.HasValue || timesheets.All(x => x.Id != activeTimesheetId.Value))
+            {
+                activeTimesheetId = timesheets.FirstOrDefault(x => x.Status == GovConMoney.Domain.Enums.TimesheetStatus.Draft)?.Id
+                    ?? timesheets.FirstOrDefault()?.Id;
+            }
+
+            var defaultChargeCodeId = chargeCodes.FirstOrDefault(x => x.IsActive)?.Id ?? chargeCodes.FirstOrDefault()?.Id ?? Guid.Empty;
+            InitializeLineHierarchy(defaultChargeCodeId);
+            InitializeExpenseHierarchy(defaultChargeCodeId);
+
+            if (activeTimesheetId.HasValue)
+            {
+                var timesheetId = activeTimesheetId.Value;
+                var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+                var activeCard = timesheets.FirstOrDefault(x => x.Id == timesheetId);
+                if (activeCard is not null)
+                {
+                    newLineWorkDate = activeCard.PeriodStart;
+                    newExpenseDate = activeCard.PeriodStart;
+                }
+
+                editableLines = Repository.Query<TimesheetLine>(tenantId)
+                    .Where(x => x.TimesheetId == timesheetId)
+                    .OrderBy(x => x.WorkDate)
+                    .ThenBy(x => x.Id)
+                    .Select(x => new EditableLine
+                    {
+                        Id = x.Id,
+                        WorkDate = x.WorkDate,
+                        EntryType = x.EntryType,
+                        ChargeCodeId = x.ChargeCodeId,
+                        Minutes = x.Minutes,
+                        Comment = x.Comment
+                    })
+                    .ToList();
+
+                var futurePtoDates = editableLines
+                    .Where(x => x.EntryType == TimesheetEntryType.Pto && x.WorkDate > today)
+                    .GroupBy(x => x.WorkDate)
+                    .Select(x => new { x.Key, Minutes = x.Sum(y => y.Minutes) })
+                    .OrderBy(x => x.Key)
+                    .ToList();
+                var futureApprovals = Repository.Query<FuturePtoApproval>(tenantId)
+                    .Where(x => x.UserId == userId && futurePtoDates.Select(d => d.Key).Contains(x.WorkDate))
+                    .ToList();
+                var futureRequests = Repository.Query<FuturePtoApprovalRequest>(tenantId)
+                    .Where(x => x.UserId == userId && futurePtoDates.Select(d => d.Key).Contains(x.WorkDate))
+                    .ToList();
+
+                futurePtoStatuses = futurePtoDates
+                    .Select(x =>
+                    {
+                        var approved = futureApprovals.FirstOrDefault(y => y.WorkDate == x.Key);
+                        var request = futureRequests.FirstOrDefault(y => y.WorkDate == x.Key);
+                        return new FuturePtoStatusRow
+                        {
+                            WorkDate = x.Key,
+                            Minutes = x.Minutes,
+                            IsApproved = approved is not null,
+                            HasRequest = request is not null,
+                            RequestedAtUtc = request?.RequestedAtUtc
+                        };
+                    })
+                    .ToList();
+
+                editableExpenses = Repository.Query<TimesheetExpense>(tenantId)
+                    .Where(x => x.TimesheetId == timesheetId)
+                    .OrderByDescending(x => x.ExpenseDate)
+                    .ThenBy(x => x.Id)
+                    .Select(x => new EditableExpense
+                    {
+                        Id = x.Id,
+                        ExpenseDate = x.ExpenseDate,
+                        ChargeCodeId = x.ChargeCodeId,
+                        Amount = x.Amount,
+                        Category = x.Category,
+                        Description = x.Description,
+                        Status = x.Status
+                    })
+                    .ToList();
+
+                workNotes = Repository.Query<TimesheetWorkNote>(tenantId)
+                    .Where(x => x.TimesheetId == timesheetId)
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .ToList();
+
+                weeklyStatusNarrative = Repository.Query<WeeklyStatusReport>(tenantId)
+                    .SingleOrDefault(x => x.TimesheetId == timesheetId)
+                    ?.Narrative;
+            }
+            else
+            {
+                editableLines = [];
+                futurePtoStatuses = [];
+                editableExpenses = [];
+                workNotes = [];
+                weeklyStatusNarrative = null;
+            }
+
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SelectCardAsync(Guid timesheetId)
+    {
+        activeTimesheetId = timesheetId;
+        await ReloadAsync();
+    }
+
+    private async Task CreateDraftAsync()
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var draft = TimesheetService.CreateTimesheetDraft(new CreateTimesheetRequest(newPeriodStart, newPeriodEnd));
+            activeTimesheetId = draft.Id;
+            message = "Draft time card created.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task AddLineAsync()
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            var chargeCodeId = newLineEntryType == TimesheetEntryType.Work ? newLineChargeCodeId : Guid.Empty;
+            TimesheetService.AddLine(
+                activeTimesheetId.Value,
+                new AddTimesheetLineRequest(newLineWorkDate, chargeCodeId, newLineMinutes, CostType.Direct, newLineComment, newLineEntryType));
+            newLineMinutes = newLineEntryType == TimesheetEntryType.NoTime ? 0 : 60;
+            newLineComment = "work log";
+            message = "Time line added.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SaveLineAsync(EditableLine line)
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            var chargeCodeId = line.EntryType == TimesheetEntryType.Work ? line.ChargeCodeId : Guid.Empty;
+            var minutes = line.EntryType == TimesheetEntryType.NoTime ? 0 : line.Minutes;
+            TimesheetService.UpdateLine(
+                activeTimesheetId.Value,
+                line.Id,
+                new UpdateTimesheetLineRequest(line.WorkDate, chargeCodeId, minutes, CostType.Direct, line.Comment, line.EntryType));
+            message = "Time line updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task AddExpenseAsync()
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.AddExpense(activeTimesheetId.Value, new AddTimesheetExpenseRequest(
+                newExpenseDate,
+                newExpenseChargeCodeId,
+                newExpenseAmount,
+                CostType.Direct,
+                newExpenseCategory,
+                newExpenseDescription));
+            newExpenseAmount = 0m;
+            newExpenseDescription = string.Empty;
+            message = "Expense added.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SaveExpenseAsync(EditableExpense expense)
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.UpdateExpense(activeTimesheetId.Value, expense.Id, new UpdateTimesheetExpenseRequest(
+                expense.ExpenseDate,
+                expense.ChargeCodeId,
+                expense.Amount,
+                CostType.Direct,
+                expense.Category,
+                expense.Description));
+            message = "Expense updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task DeleteExpenseAsync(Guid expenseId)
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.DeleteExpense(activeTimesheetId.Value, expenseId);
+            message = "Expense deleted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task VoidExpenseAsync(EditableExpense expense)
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            var reason = string.IsNullOrWhiteSpace(expense.VoidReasonInput) ? "Voided by time reporter." : expense.VoidReasonInput;
+            TimesheetService.VoidExpense(activeTimesheetId.Value, expense.Id, reason);
+            message = "Expense voided.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task AddWorkNoteAsync()
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.AddWorkNote(activeTimesheetId.Value, new AddWorkNoteRequest(newWorkNote));
+            newWorkNote = string.Empty;
+            message = "Work note saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SaveWeeklyStatusAsync()
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.UpsertWeeklyStatusReport(activeTimesheetId.Value, new UpsertWeeklyStatusReportRequest(weeklyStatusNarrative ?? string.Empty));
+            message = "Weekly status report saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task SubmitTimesheetAsync()
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.Submit(new SubmitTimesheetRequest(activeTimesheetId.Value, "I attest this entry is accurate."));
+            message = "Time card submitted.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RequestFuturePtoApprovalAsync(DateOnly workDate)
+    {
+        if (!BeginAction() || !activeTimesheetId.HasValue) return;
+        try
+        {
+            TimesheetService.RequestFuturePtoApproval(activeTimesheetId.Value, workDate, "Requested from time card.");
+            message = $"Future PTO approval requested for {workDate:yyyy-MM-dd}.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+
+    private IEnumerable<TaskOrder> LineTaskOrderOptions() => taskOrders.Where(x => x.ContractId == newLineContractId);
+    private IEnumerable<Clin> LineClinOptions() => clins.Where(x => x.TaskOrderId == newLineTaskOrderId);
+    private IEnumerable<WbsNode> LineWbsOptions() => wbsNodes.Where(x => x.ClinId == newLineClinId);
+    private IEnumerable<ChargeCode> LineChargeCodeOptions() => chargeCodes.Where(x => x.WbsNodeId == newLineWbsId && x.IsActive);
+
+    private IEnumerable<TaskOrder> ExpenseTaskOrderOptions() => taskOrders.Where(x => x.ContractId == newExpenseContractId);
+    private IEnumerable<Clin> ExpenseClinOptions() => clins.Where(x => x.TaskOrderId == newExpenseTaskOrderId);
+    private IEnumerable<WbsNode> ExpenseWbsOptions() => wbsNodes.Where(x => x.ClinId == newExpenseClinId);
+    private IEnumerable<ChargeCode> ExpenseChargeCodeOptions() => chargeCodes.Where(x => x.WbsNodeId == newExpenseWbsId && x.IsActive);
+
+    private bool SelectedLineContractRequiresClinTracking()
+        => contracts.FirstOrDefault(x => x.Id == newLineContractId)?.RequiresClinTracking ?? false;
+
+    private bool SelectedExpenseContractRequiresClinTracking()
+        => contracts.FirstOrDefault(x => x.Id == newExpenseContractId)?.RequiresClinTracking ?? false;
+
+    private void OnNewLineContractChanged(ChangeEventArgs args)
+    {
+        newLineContractId = ParseGuid(args.Value);
+        var nextTaskOrder = LineTaskOrderOptions().FirstOrDefault();
+        newLineTaskOrderId = nextTaskOrder?.Id ?? Guid.Empty;
+        var nextClin = LineClinOptions().FirstOrDefault();
+        newLineClinId = nextClin?.Id ?? Guid.Empty;
+        var nextWbs = LineWbsOptions().FirstOrDefault();
+        newLineWbsId = nextWbs?.Id ?? Guid.Empty;
+        newLineChargeCodeId = LineChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewLineTaskOrderChanged(ChangeEventArgs args)
+    {
+        newLineTaskOrderId = ParseGuid(args.Value);
+        var nextClin = LineClinOptions().FirstOrDefault();
+        newLineClinId = nextClin?.Id ?? Guid.Empty;
+        var nextWbs = LineWbsOptions().FirstOrDefault();
+        newLineWbsId = nextWbs?.Id ?? Guid.Empty;
+        newLineChargeCodeId = LineChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewLineClinChanged(ChangeEventArgs args)
+    {
+        newLineClinId = ParseGuid(args.Value);
+        var nextWbs = LineWbsOptions().FirstOrDefault();
+        newLineWbsId = nextWbs?.Id ?? Guid.Empty;
+        newLineChargeCodeId = LineChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewLineWbsChanged(ChangeEventArgs args)
+    {
+        newLineWbsId = ParseGuid(args.Value);
+        newLineChargeCodeId = LineChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewLineChargeCodeChanged(ChangeEventArgs args)
+    {
+        newLineChargeCodeId = ParseGuid(args.Value);
+        InitializeLineHierarchy(newLineChargeCodeId);
+    }
+
+    private void OnNewLineEntryTypeChanged(ChangeEventArgs args)
+    {
+        if (Enum.TryParse<TimesheetEntryType>(args.Value?.ToString(), out var parsed))
+        {
+            newLineEntryType = parsed;
+        }
+        else
+        {
+            newLineEntryType = TimesheetEntryType.Work;
+        }
+
+        if (newLineEntryType == TimesheetEntryType.NoTime)
+        {
+            newLineMinutes = 0;
+        }
+        else if (newLineMinutes <= 0)
+        {
+            newLineMinutes = 60;
+        }
+    }
+
+    private void OnNewExpenseContractChanged(ChangeEventArgs args)
+    {
+        newExpenseContractId = ParseGuid(args.Value);
+        var nextTaskOrder = ExpenseTaskOrderOptions().FirstOrDefault();
+        newExpenseTaskOrderId = nextTaskOrder?.Id ?? Guid.Empty;
+        var nextClin = ExpenseClinOptions().FirstOrDefault();
+        newExpenseClinId = nextClin?.Id ?? Guid.Empty;
+        var nextWbs = ExpenseWbsOptions().FirstOrDefault();
+        newExpenseWbsId = nextWbs?.Id ?? Guid.Empty;
+        newExpenseChargeCodeId = ExpenseChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewExpenseTaskOrderChanged(ChangeEventArgs args)
+    {
+        newExpenseTaskOrderId = ParseGuid(args.Value);
+        var nextClin = ExpenseClinOptions().FirstOrDefault();
+        newExpenseClinId = nextClin?.Id ?? Guid.Empty;
+        var nextWbs = ExpenseWbsOptions().FirstOrDefault();
+        newExpenseWbsId = nextWbs?.Id ?? Guid.Empty;
+        newExpenseChargeCodeId = ExpenseChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewExpenseClinChanged(ChangeEventArgs args)
+    {
+        newExpenseClinId = ParseGuid(args.Value);
+        var nextWbs = ExpenseWbsOptions().FirstOrDefault();
+        newExpenseWbsId = nextWbs?.Id ?? Guid.Empty;
+        newExpenseChargeCodeId = ExpenseChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewExpenseWbsChanged(ChangeEventArgs args)
+    {
+        newExpenseWbsId = ParseGuid(args.Value);
+        newExpenseChargeCodeId = ExpenseChargeCodeOptions().FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private void OnNewExpenseChargeCodeChanged(ChangeEventArgs args)
+    {
+        newExpenseChargeCodeId = ParseGuid(args.Value);
+        InitializeExpenseHierarchy(newExpenseChargeCodeId);
+    }
+
+    private void InitializeLineHierarchy(Guid chargeCodeId)
+    {
+        if (!TryResolveHierarchy(chargeCodeId, out var contractId, out var taskOrderId, out var clinId, out var wbsId))
+        {
+            newLineContractId = contracts.FirstOrDefault()?.Id ?? Guid.Empty;
+            newLineTaskOrderId = taskOrders.FirstOrDefault(x => x.ContractId == newLineContractId)?.Id ?? Guid.Empty;
+            newLineClinId = clins.FirstOrDefault(x => x.TaskOrderId == newLineTaskOrderId)?.Id ?? Guid.Empty;
+            newLineWbsId = wbsNodes.FirstOrDefault(x => x.ClinId == newLineClinId)?.Id ?? Guid.Empty;
+            newLineChargeCodeId = chargeCodes.FirstOrDefault(x => x.WbsNodeId == newLineWbsId && x.IsActive)?.Id ?? Guid.Empty;
+            return;
+        }
+
+        newLineContractId = contractId;
+        newLineTaskOrderId = taskOrderId;
+        newLineClinId = clinId;
+        newLineWbsId = wbsId;
+        newLineChargeCodeId = chargeCodeId;
+    }
+
+    private void InitializeExpenseHierarchy(Guid chargeCodeId)
+    {
+        if (!TryResolveHierarchy(chargeCodeId, out var contractId, out var taskOrderId, out var clinId, out var wbsId))
+        {
+            newExpenseContractId = contracts.FirstOrDefault()?.Id ?? Guid.Empty;
+            newExpenseTaskOrderId = taskOrders.FirstOrDefault(x => x.ContractId == newExpenseContractId)?.Id ?? Guid.Empty;
+            newExpenseClinId = clins.FirstOrDefault(x => x.TaskOrderId == newExpenseTaskOrderId)?.Id ?? Guid.Empty;
+            newExpenseWbsId = wbsNodes.FirstOrDefault(x => x.ClinId == newExpenseClinId)?.Id ?? Guid.Empty;
+            newExpenseChargeCodeId = chargeCodes.FirstOrDefault(x => x.WbsNodeId == newExpenseWbsId && x.IsActive)?.Id ?? Guid.Empty;
+            return;
+        }
+
+        newExpenseContractId = contractId;
+        newExpenseTaskOrderId = taskOrderId;
+        newExpenseClinId = clinId;
+        newExpenseWbsId = wbsId;
+        newExpenseChargeCodeId = chargeCodeId;
+    }
+
+    private bool TryResolveHierarchy(Guid chargeCodeId, out Guid contractId, out Guid taskOrderId, out Guid clinId, out Guid wbsId)
+    {
+        contractId = Guid.Empty;
+        taskOrderId = Guid.Empty;
+        clinId = Guid.Empty;
+        wbsId = Guid.Empty;
+
+        var chargeCode = chargeCodes.FirstOrDefault(x => x.Id == chargeCodeId);
+        if (chargeCode is null)
+        {
+            return false;
+        }
+
+        var wbs = wbsNodes.FirstOrDefault(x => x.Id == chargeCode.WbsNodeId);
+        if (wbs is null)
+        {
+            return false;
+        }
+
+        var clin = clins.FirstOrDefault(x => x.Id == wbs.ClinId);
+        if (clin is null)
+        {
+            return false;
+        }
+
+        var taskOrder = taskOrders.FirstOrDefault(x => x.Id == clin.TaskOrderId);
+        if (taskOrder is null)
+        {
+            return false;
+        }
+
+        contractId = taskOrder.ContractId;
+        taskOrderId = taskOrder.Id;
+        clinId = clin.Id;
+        wbsId = wbs.Id;
+        return true;
+    }
+
+    private static Guid ParseGuid(object? value)
+    {
+        return Guid.TryParse(value?.ToString(), out var parsed) ? parsed : Guid.Empty;
+    }
+
+    private sealed class EditableLine
+    {
+        public Guid Id { get; set; }
+        public DateOnly WorkDate { get; set; }
+        public TimesheetEntryType EntryType { get; set; } = TimesheetEntryType.Work;
+        public Guid ChargeCodeId { get; set; }
+        public int Minutes { get; set; }
+        public string Comment { get; set; } = string.Empty;
+    }
+
+    private sealed class EditableExpense
+    {
+        public Guid Id { get; set; }
+        public DateOnly ExpenseDate { get; set; }
+        public Guid ChargeCodeId { get; set; }
+        public decimal Amount { get; set; }
+        public string Category { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public ExpenseStatus Status { get; set; }
+        public string VoidReasonInput { get; set; } = string.Empty;
+    }
+
+    private sealed class FuturePtoStatusRow
+    {
+        public DateOnly WorkDate { get; set; }
+        public int Minutes { get; set; }
+        public bool IsApproved { get; set; }
+        public bool HasRequest { get; set; }
+        public DateTime? RequestedAtUtc { get; set; }
+    }
+}

@@ -1,0 +1,21 @@
+@page "/accountant"
+@attribute [Authorize(Roles = "Accountant")]
+
+<h2>Accountant Dashboard</h2>
+<p>Stub dashboard for accountant role.</p>
+
+<ul>
+    <li><a href="/accountant/expenses/categories">Expense Category Assignment</a></li>
+    <li><a href="/accountant/reports/labor">Labor Distribution Report</a></li>
+    <li><a href="/accountant/reports/project">Project Summary Report</a></li>
+    <li><a href="/accountant/reports/clin-summary">CLIN Summary Report</a></li>
+    <li><a href="/accountant/reports/compliance">Timesheet Compliance Report</a></li>
+    <li><a href="/accountant/reports/audit">Audit Trail Report</a></li>
+    <li><a href="/accountant/reports/journal">General Journal Report</a></li>
+    <li><a href="/accountant/reports/adjusting-journal">Adjusting Journal Workflow</a></li>
+    <li><a href="/accountant/reports/payroll">Payroll Reconciliation Report</a></li>
+    <li><a href="/accountant/reports/billing">Billing and Billed-to-Booked Reconciliation</a></li>
+    <li><a href="/accountant/reports/indirect">Indirect Rates and Burden Report</a></li>
+    <li><a href="/accountant/reports/trial-balance">Trial Balance Report</a></li>
+    <li><a href="/accountant/reports/period-close">Period Close Checklist</a></li>
+</ul>

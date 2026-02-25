@@ -1,0 +1,244 @@
+@page "/admin/enrollments"
+@attribute [Authorize(Roles = "Admin")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@using GovConMoney.Infrastructure.Persistence
+@using GovConMoney.Web.Security
+@using Microsoft.AspNetCore.Identity
+@inject InMemoryDataStore Store
+@inject UserManager<GovConIdentityUser> UserManager
+@inject RoleManager<IdentityRole> RoleManager
+@inject ITenantContext TenantContext
+
+<h3>Admin - Enrollment Approvals</h3>
+<p>API view: <a href="/api/admin/enrollments" target="_blank">/api/admin/enrollments</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<table class="table">
+    <thead><tr><th>Tenant</th><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Submitted</th><th>Actions</th></tr></thead>
+    <tbody>
+    @foreach (var r in requests.OrderByDescending(x => x.SubmittedAtUtc))
+    {
+        <tr>
+            <td>@r.TenantId</td>
+            <td>@r.UserName</td>
+            <td>@r.Email</td>
+            <td>@r.RequestedRole</td>
+            <td>@r.Status</td>
+            <td>@r.SubmittedAtUtc</td>
+            <td>
+                @if (r.Status == EnrollmentStatus.Pending)
+                {
+                    <button class="btn btn-sm btn-success" type="button" @onclick="() => ApproveAsync(r.Id)" disabled="@isBusy">Approve</button>
+                    <button class="btn btn-sm btn-danger ms-1" type="button" @onclick="() => RejectAsync(r.Id)" disabled="@isBusy">Reject</button>
+                }
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<EnrollmentRequest> requests = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            requests = Store.EnrollmentRequests
+                .Where(x => x.TenantId == TenantContext.TenantId)
+                .OrderByDescending(x => x.SubmittedAtUtc)
+                .ToList();
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ApproveAsync(Guid requestId)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var request = Store.EnrollmentRequests.SingleOrDefault(x => x.Id == requestId)
+                ?? throw new InvalidOperationException("Enrollment request not found.");
+            if (request.Status != EnrollmentStatus.Pending)
+            {
+                return;
+            }
+
+            var role = request.RequestedRole;
+            var allowedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TimeReporter", "Supervisor", "Accountant", "Compliance", "Manager" };
+            if (!allowedRoles.Contains(role))
+            {
+                role = "TimeReporter";
+            }
+
+            var newUser = new AppUser
+            {
+                TenantId = request.TenantId,
+                UserName = request.UserName,
+                Email = request.Email,
+                MfaEnabled = false,
+                PasskeyRequired = false
+            };
+            newUser.Roles.Add(role);
+            Store.Users.Add(newUser);
+
+            if (!await RoleManager.RoleExistsAsync(role))
+            {
+                var createRole = await RoleManager.CreateAsync(new IdentityRole(role));
+                if (!createRole.Succeeded)
+                {
+                    throw new InvalidOperationException($"Failed to create role {role}: {string.Join(", ", createRole.Errors.Select(x => x.Description))}");
+                }
+            }
+
+            var identityUser = new GovConIdentityUser
+            {
+                Id = newUser.Id.ToString(),
+                DomainUserId = newUser.Id,
+                TenantId = newUser.TenantId,
+                UserName = newUser.UserName,
+                Email = newUser.Email,
+                EmailConfirmed = true,
+                LockoutEnabled = true,
+                PasskeyRequired = false
+            };
+
+            var createUserResult = await UserManager.CreateAsync(identityUser, IdentitySeed.SeedPassword);
+            if (!createUserResult.Succeeded)
+            {
+                throw new InvalidOperationException($"Failed to create identity user for enrollment: {string.Join(", ", createUserResult.Errors.Select(x => x.Description))}");
+            }
+
+            var addRoleResult = await UserManager.AddToRoleAsync(identityUser, role);
+            if (!addRoleResult.Succeeded)
+            {
+                throw new InvalidOperationException($"Failed to assign role to identity user: {string.Join(", ", addRoleResult.Errors.Select(x => x.Description))}");
+            }
+
+            await UserManager.AddClaimsAsync(identityUser,
+            [
+                new System.Security.Claims.Claim("tenant_id", newUser.TenantId.ToString()),
+                new System.Security.Claims.Claim("domain_user_id", newUser.Id.ToString()),
+                new System.Security.Claims.Claim("passkey_required", "false")
+            ]);
+
+            Store.PersonnelProfiles.Add(new PersonnelProfile
+            {
+                TenantId = request.TenantId,
+                UserId = newUser.Id,
+                HourlyRate = 0m
+            });
+
+            request.Status = EnrollmentStatus.Approved;
+            request.ReviewedByUserId = TenantContext.UserId;
+            request.ReviewedAtUtc = DateTime.UtcNow;
+            request.ReviewNote = "Approved by admin.";
+
+            Store.AuditEvents.Add(new AuditEvent
+            {
+                TenantId = request.TenantId,
+                EntityType = "EnrollmentRequest",
+                EntityId = request.Id,
+                EventType = EventType.EnrollmentApproved,
+                ActorUserId = TenantContext.UserId,
+                ActorRoles = string.Join(",", TenantContext.Roles),
+                OccurredAtUtc = DateTime.UtcNow,
+                AfterJson = System.Text.Json.JsonSerializer.Serialize(request),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+            Store.SaveChanges();
+
+            message = "Enrollment approved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RejectAsync(Guid requestId)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var request = Store.EnrollmentRequests.SingleOrDefault(x => x.Id == requestId)
+                ?? throw new InvalidOperationException("Enrollment request not found.");
+            if (request.Status != EnrollmentStatus.Pending)
+            {
+                return;
+            }
+
+            request.Status = EnrollmentStatus.Rejected;
+            request.ReviewedByUserId = TenantContext.UserId;
+            request.ReviewedAtUtc = DateTime.UtcNow;
+            request.ReviewNote = "Rejected by admin.";
+
+            Store.AuditEvents.Add(new AuditEvent
+            {
+                TenantId = request.TenantId,
+                EntityType = "EnrollmentRequest",
+                EntityId = request.Id,
+                EventType = EventType.EnrollmentRejected,
+                ActorUserId = TenantContext.UserId,
+                ActorRoles = string.Join(",", TenantContext.Roles),
+                OccurredAtUtc = DateTime.UtcNow,
+                AfterJson = System.Text.Json.JsonSerializer.Serialize(request),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+            Store.SaveChanges();
+
+            message = "Enrollment rejected.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+}

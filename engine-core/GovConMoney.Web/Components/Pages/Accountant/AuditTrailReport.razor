@@ -1,0 +1,66 @@
+@page "/accountant/reports/audit"
+@attribute [Authorize(Roles = "Accountant")]
+@using GovConMoney.Domain.Enums
+@inject GovConMoney.Application.Services.ReportingService Reporting
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+
+<h3>Accountant - Audit Trail Search</h3>
+
+<form method="get" action="/accountant/reports/audit">
+    <label>Entity Type</label>
+    <input class="form-control" name="entityType" value="@entityType" />
+    <label class="mt-2">Event Type</label>
+    <select class="form-select" name="eventType">
+        <option value="">(Any)</option>
+        @foreach (var value in Enum.GetValues<EventType>())
+        {
+            <option value="@value" selected="@(selectedEventType == value.ToString())">@value</option>
+        }
+    </select>
+    <button class="btn btn-primary mt-2" type="submit">Search</button>
+</form>
+
+<p class="mt-2">
+    API Export:
+    <a href="@JsonLink()" target="_blank">JSON</a> |
+    <a href="@CsvLink()" target="_blank">CSV</a>
+</p>
+
+<table class="table mt-2">
+    <thead><tr><th>When</th><th>Entity</th><th>Event</th><th>Actor</th><th>Reason</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        var actor = Store.Users.FirstOrDefault(x => x.Id == row.ActorUserId)?.UserName ?? row.ActorUserId.ToString();
+        <tr><td>@row.OccurredAtUtc</td><td>@row.EntityType</td><td>@row.EventType</td><td>@actor</td><td>@row.ReasonForChange</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public string? entityType { get; set; }
+    [SupplyParameterFromQuery] public string? selectedEventType { get; set; }
+
+    private IReadOnlyList<GovConMoney.Domain.Entities.AuditEvent> rows = [];
+
+    protected override void OnParametersSet()
+    {
+        EventType? eventType = null;
+        if (Enum.TryParse<EventType>(selectedEventType, out var parsed))
+        {
+            eventType = parsed;
+        }
+
+        rows = Reporting.SearchAudit(string.IsNullOrWhiteSpace(entityType) ? null : entityType, eventType);
+    }
+
+    private string JsonLink()
+    {
+        var url = "/api/reports/audit?format=json";
+        if (!string.IsNullOrWhiteSpace(entityType)) url += $"&entityType={Uri.EscapeDataString(entityType)}";
+        if (!string.IsNullOrWhiteSpace(selectedEventType)) url += $"&eventType={Uri.EscapeDataString(selectedEventType)}";
+        return url;
+    }
+
+    private string CsvLink() => JsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+}

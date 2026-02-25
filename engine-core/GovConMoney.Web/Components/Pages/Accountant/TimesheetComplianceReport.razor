@@ -1,0 +1,29 @@
+@page "/accountant/reports/compliance"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.ReportingService Reporting
+
+<h3>Accountant - Timesheet Compliance Report</h3>
+<p>
+    API Export:
+    <a href="/api/reports/compliance?format=json" target="_blank">JSON</a> |
+    <a href="/api/reports/compliance?format=csv" target="_blank">CSV</a>
+</p>
+
+<table class="table mt-2">
+    <thead><tr><th>Employee</th><th>Missing Days</th><th>Daily Entry Violations</th><th>Late Submissions</th><th>Correction Count</th></tr></thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr><td>@row.Employee</td><td>@row.MissingDays</td><td>@row.DailyEntryViolations</td><td>@row.LateSubmissions</td><td>@row.CorrectionCount</td></tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private IReadOnlyList<GovConMoney.Application.Models.TimesheetComplianceRow> rows = [];
+
+    protected override void OnInitialized()
+    {
+        rows = Reporting.TimesheetCompliance();
+    }
+}

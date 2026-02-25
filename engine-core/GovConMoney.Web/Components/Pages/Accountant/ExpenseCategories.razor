@@ -1,0 +1,163 @@
+@page "/accountant/expenses/categories"
+@attribute [Authorize(Roles = "Accountant")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Models
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject TimesheetService TimesheetService
+@inject NavigationManager Nav
+
+<h3>Accountant - Expense Accounting Categories</h3>
+<p>Assign FAR/indirect accounting categories to submitted expense entries.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>Employee</th>
+            <th>Period</th>
+            <th>Expense Date</th>
+            <th>Charge Code</th>
+            <th>Amount</th>
+            <th>Expense Status</th>
+            <th>Accounting Category</th>
+            <th>Reason</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.Employee</td>
+            <td>@row.PeriodStart - @row.PeriodEnd</td>
+            <td>@row.ExpenseDate</td>
+            <td>@row.ChargeCode</td>
+            <td>@row.Amount.ToString("C")</td>
+            <td>@row.ExpenseStatus</td>
+            <td>
+                <select class="form-select form-select-sm" @bind="row.SelectedCategory">
+                    @foreach (var value in categoryValues)
+                    {
+                        <option value="@value">@value</option>
+                    }
+                </select>
+            </td>
+            <td><input class="form-control form-control-sm" @bind="row.Reason" /></td>
+            <td>
+                <button class="btn btn-sm btn-primary" type="button" @onclick="() => SaveCategoryAsync(row)" disabled="@isBusy">Save</button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private readonly List<ExpenseAccountingCategory> categoryValues = Enum.GetValues<ExpenseAccountingCategory>().ToList();
+    private List<ExpenseRow> rows = [];
+    private bool isBusy;
+    private string? error;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        if (query.ContainsKey("saved"))
+        {
+            message = "Expense accounting category saved.";
+        }
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            var userById = Repository.Query<AppUser>(tenantId).ToDictionary(x => x.Id, x => x.UserName);
+            var timesheets = Repository.Query<Timesheet>(tenantId).ToDictionary(x => x.Id);
+            var chargeCodes = Repository.Query<ChargeCode>(tenantId).ToDictionary(x => x.Id, x => x.Code);
+
+            rows = Repository.Query<TimesheetExpense>(tenantId)
+                .Where(x => x.Status != ExpenseStatus.Voided)
+                .ToList()
+                .Where(x => timesheets.ContainsKey(x.TimesheetId))
+                .Select(x =>
+                {
+                    var timesheet = timesheets[x.TimesheetId];
+                    return new ExpenseRow
+                    {
+                        ExpenseId = x.Id,
+                        Employee = userById.TryGetValue(timesheet.UserId, out var employee) ? employee : timesheet.UserId.ToString(),
+                        PeriodStart = timesheet.PeriodStart,
+                        PeriodEnd = timesheet.PeriodEnd,
+                        ExpenseDate = x.ExpenseDate,
+                        ChargeCode = chargeCodes.TryGetValue(x.ChargeCodeId, out var code) ? code : x.ChargeCodeId.ToString(),
+                        Amount = x.Amount,
+                        ExpenseStatus = x.Status,
+                        SelectedCategory = x.AccountingCategory
+                    };
+                })
+                .OrderByDescending(x => x.PeriodEnd)
+                .ThenByDescending(x => x.ExpenseDate)
+                .ToList();
+
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SaveCategoryAsync(ExpenseRow row)
+    {
+        if (isBusy) return;
+        isBusy = true;
+        error = null;
+        message = null;
+        try
+        {
+            TimesheetService.AssignExpenseAccountingCategory(row.ExpenseId, row.SelectedCategory, row.Reason);
+            message = "Expense accounting category saved.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private sealed class ExpenseRow
+    {
+        public Guid ExpenseId { get; set; }
+        public string Employee { get; set; } = string.Empty;
+        public DateOnly PeriodStart { get; set; }
+        public DateOnly PeriodEnd { get; set; }
+        public DateOnly ExpenseDate { get; set; }
+        public string ChargeCode { get; set; } = string.Empty;
+        public decimal Amount { get; set; }
+        public ExpenseStatus ExpenseStatus { get; set; }
+        public ExpenseAccountingCategory SelectedCategory { get; set; }
+        public string Reason { get; set; } = string.Empty;
+    }
+}

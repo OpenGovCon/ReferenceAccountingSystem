@@ -1,0 +1,60 @@
+@page "/auth/login"
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<h3>Login</h3>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<form method="post" action="/api/login-form">
+    <label>Username</label>
+    <input class="form-control" name="username" />
+    <label class="mt-2">Password</label>
+    <input class="form-control" name="password" type="password" />
+    <button class="btn btn-primary mt-2" type="submit">Sign In</button>
+</form>
+
+<hr />
+
+<h5>Sign In With Passkey</h5>
+<div class="mb-2">
+    <label>Username</label>
+    <input class="form-control" @bind="passkeyUserName" />
+</div>
+<button class="btn btn-outline-primary" @onclick="PasskeyLogin">Sign In With Passkey</button>
+
+<p class="mt-2"><small>Seed users use temporary password: <code>TempPass#2026!</code></small></p>
+<p class="mt-2"><a href="/auth/enroll">Need access? Submit enrollment request</a></p>
+
+@code {
+    private string? error;
+    private string passkeyUserName = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        error = query.TryGetValue("error", out var value) ? value.ToString() : null;
+    }
+
+    private async Task PasskeyLogin()
+    {
+        if (string.IsNullOrWhiteSpace(passkeyUserName))
+        {
+            error = "Enter username for passkey sign-in.";
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("govConPasskeys.login", passkeyUserName);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

@@ -1,0 +1,1544 @@
+@page "/compliance/contracts"
+@attribute [Authorize(Roles = "Compliance")]
+@using System.Globalization
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject ComplianceService ComplianceService
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@rendermode InteractiveServer
+
+<h3>Compliance - Contracts, Task Orders, CLIN, WBS, Charge Codes</h3>
+<p>
+    API view:
+    <a href="/api/compliance/contracts-view" target="_blank">contracts</a> |
+    <a href="/api/compliance/contracts-burndown-view" target="_blank">burndown</a> |
+    <a href="/api/compliance/chargecodes-view" target="_blank">charge codes</a> |
+    <a href="/api/compliance/pricing-view" target="_blank">pricing</a>
+</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(successMessage))
+{
+    <div class="alert alert-success">@successMessage</div>
+}
+
+<div class="contract-grid">
+    <article class="contract-card new-contract-card">
+        <header class="contract-header">
+            <h4>
+                New Contract
+                <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("new-contract")'>?</button>
+            </h4>
+            <p class="contract-number">Editable draft card</p>
+        </header>
+        <form class="new-contract-form">
+            <label class="form-label">Contract Name</label>
+            <input class="form-control mb-2" name="name" placeholder="Contract Name" @bind="newContractName" />
+
+            <label class="form-label">Contract Number</label>
+            <input class="form-control mb-2" name="contractNumber" placeholder="Contract Number" @bind="newContractNumber" />
+
+            <label class="form-label">Budget</label>
+            <input class="form-control mb-2" name="budget" placeholder="Budget" @bind="newContractBudget" />
+
+            <label class="form-label">Contract Type</label>
+            <select class="form-select mb-3" name="contractType" @bind="newContractType">
+                <option>FixedValue</option>
+                <option>Idiq</option>
+                <option>CostPlusFee</option>
+            </select>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" @bind="newContractRequiresClinTracking" id="new-contract-clin" />
+                <label class="form-check-label" for="new-contract-clin">Require CLIN tracking on this contract</label>
+            </div>
+
+            <label class="form-label">Base Year Start</label>
+            <input type="date" class="form-control mb-2" @bind="newContractBaseYearStartDate" />
+            <label class="form-label">Base Year End</label>
+            <input type="date" class="form-control mb-3" @bind="newContractBaseYearEndDate" />
+
+            <button class="btn btn-primary" type="button" @onclick="CreateContractAsync" disabled="@isSavingContract">@(isSavingContract ? "Saving..." : "Create Contract")</button>
+        </form>
+    </article>
+
+    @foreach (var contract in contracts)
+    {
+        var details = activeDetails.TryGetValue(contract.Id, out var panel) ? panel : DetailPanel.None;
+        var slices = BuildPieSlices(contract.Id);
+        var burndown = burndownByContract.TryGetValue(contract.Id, out var summary)
+            ? summary
+            : new BurndownSummary { ContractId = contract.Id, BudgetAmount = contract.BudgetAmount, RemainingAmount = contract.BudgetAmount, SpentAmount = 0m, Points = [] };
+
+        <article class="contract-card">
+            <header class="contract-header">
+                <div class="contract-title-row">
+                    <h4>@contract.Name</h4>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" title="Edit Contract" @onclick="() => OpenContractEdit(contract.Id)">Edit</button>
+                </div>
+                <p class="contract-number">@contract.ContractNumber</p>
+                <p class="contract-meta">
+                    @contract.ContractType | Budget @ToCurrency(contract.BudgetAmount)
+                    @if (contract.RequiresClinTracking)
+                    {
+                        <span class="ms-1 badge text-bg-info">CLIN Tracking Required</span>
+                    }
+                    <br />
+                    Base Year: @contract.BaseYearStartDate - @contract.BaseYearEndDate
+                    <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("contract-card")'>?</button>
+                </p>
+
+                @if (contractEditId == contract.Id)
+                {
+                    <form class="editor-form mt-2" @onsubmit="SaveContractEditAsync" @onsubmit:preventDefault="true">
+                        <label>Name</label>
+                        <input class="form-control mb-1" @bind="contractEditName" />
+                        <label>Contract Number</label>
+                        <input class="form-control mb-1" @bind="contractEditNumber" />
+                        <label>Budget</label>
+                        <input class="form-control mb-1" @bind="contractEditBudget" />
+                        <label>Type</label>
+                        <select class="form-select mb-1" @bind="contractEditType">
+                            <option>FixedValue</option>
+                            <option>Idiq</option>
+                            <option>CostPlusFee</option>
+                        </select>
+                        <div class="form-check mb-1">
+                            <input class="form-check-input" type="checkbox" @bind="contractEditRequiresClinTracking" id="edit-contract-clin" />
+                            <label class="form-check-label" for="edit-contract-clin">Require CLIN tracking</label>
+                        </div>
+                        <label>Base Year Start</label>
+                        <input type="date" class="form-control mb-1" @bind="contractEditBaseYearStartDate" />
+                        <label>Base Year End</label>
+                        <input type="date" class="form-control mb-1" @bind="contractEditBaseYearEndDate" />
+                        <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                        <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseContractEdit">Cancel</button>
+                    </form>
+                }
+            </header>
+
+            <div class="chart-row">
+                <section class="chart-card">
+                    <div class="chart-title">
+                        Labor Category Allocation
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("labor-allocation")'>?</button>
+                    </div>
+                    @if (slices.Count == 0)
+                    {
+                        <p class="empty-state">No labor pricing entries yet.</p>
+                    }
+                    else
+                    {
+                        <div class="chart-body">
+                            <svg class="pie-chart" viewBox="0 0 120 120" role="img" aria-label="Labor category allocation">
+                                @foreach (var slice in slices)
+                                {
+                                    <path d="@slice.Path" fill="@slice.Color"></path>
+                                }
+                            </svg>
+                            <ul class="chart-legend">
+                                @foreach (var slice in slices)
+                                {
+                                    <li>
+                                        <span class="swatch" style="background-color:@slice.Color"></span>
+                                        @slice.Label (@slice.PercentageLabel)
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </section>
+
+                <section class="chart-card">
+                    <div class="chart-title">
+                        Burndown (Charged $)
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("burndown")'>?</button>
+                    </div>
+                    <svg class="line-chart" viewBox="0 0 320 160" role="img" aria-label="Contract burndown chart">
+                        <line x1="24" y1="136" x2="296" y2="136" class="axis"></line>
+                        <line x1="24" y1="20" x2="24" y2="136" class="axis"></line>
+                        <polyline class="trend" points="@BuildBurndownPolyline(burndown)"></polyline>
+                    </svg>
+                    <div class="burndown-metrics">
+                        <span>Spent: @ToCurrency(burndown.SpentAmount)</span>
+                        <span>Remaining: @ToCurrency(burndown.RemainingAmount)</span>
+                    </div>
+                </section>
+            </div>
+
+            <footer class="contract-footer">
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.Clins)">CLIN</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add CLIN" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.Clins)">+</button>
+                </div>
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.LaborCategories)">Labor Categories</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add Labor Category" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.LaborCategories)">+</button>
+                </div>
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.TaskOrders)">Task Orders</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add Task Order" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.TaskOrders)">+</button>
+                </div>
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.Wbs)">WBS</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add WBS" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.Wbs)">+</button>
+                </div>
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.PerformancePeriods)">Performance</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add Option Year" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.PerformancePeriods)">+</button>
+                </div>
+                <div class="footer-action-group">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetails(contract.Id, DetailPanel.ChargeCodes)">Charge Codes</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" title="Add Charge Code" @onclick="() => OpenAddEditor(contract.Id, DetailPanel.ChargeCodes)">+</button>
+                </div>
+            </footer>
+
+            @if (details != DetailPanel.None)
+            {
+                <section class="details-panel">
+                    @if (details == DetailPanel.TaskOrders)
+                    {
+                        var taskOrderItems = taskOrders.Where(x => x.ContractId == contract.Id).ToList();
+                        <h5>Task Orders</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("task-orders")'>?</button>
+                        @if (taskOrderItems.Count == 0)
+                        {
+                            <p class="empty-state">No task orders yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in taskOrderItems)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>@item.Number (@ToCurrency(item.BudgetAmount))</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.TaskOrders, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.TaskOrders))
+                        {
+                            <form class="editor-form" @onsubmit="SaveTaskOrderEditorAsync" @onsubmit:preventDefault="true">
+                                <label>Task Order Number</label>
+                                <input class="form-control mb-1" @bind="editorTaskOrderNumber" />
+                                <label>Budget</label>
+                                <input class="form-control mb-1" @bind="editorTaskOrderBudget" />
+                                <div class="form-check mb-1">
+                                    <input class="form-check-input" type="checkbox" @bind="editorTaskOrderRequiresClinTracking" id="editor-taskorder-clin" />
+                                    <label class="form-check-label" for="editor-taskorder-clin">Require CLIN tracking</label>
+                                </div>
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                    else if (details == DetailPanel.Clins)
+                    {
+                        var taskOrderIds = taskOrders.Where(x => x.ContractId == contract.Id).Select(x => x.Id).ToHashSet();
+                        var clinItems = clins.Where(x => taskOrderIds.Contains(x.TaskOrderId)).ToList();
+                        var taskOrderItems = taskOrders.Where(x => x.ContractId == contract.Id).ToList();
+                        <h5>CLIN</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("clins")'>?</button>
+                        @if (clinItems.Count == 0)
+                        {
+                            <p class="empty-state">No CLIN records yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in clinItems)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>@item.Number</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.Clins, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.Clins))
+                        {
+                            <form class="editor-form" @onsubmit="SaveClinEditorAsync" @onsubmit:preventDefault="true">
+                                <label>Task Order</label>
+                                <select class="form-select mb-1" @bind="editorClinTaskOrderId">
+                                    @foreach (var to in taskOrderItems)
+                                    {
+                                        <option value="@to.Id">@to.Number</option>
+                                    }
+                                </select>
+                                <label>CLIN Number</label>
+                                <input class="form-control mb-1" @bind="editorClinNumber" />
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                    else if (details == DetailPanel.Wbs)
+                    {
+                        var taskOrderIds = taskOrders.Where(x => x.ContractId == contract.Id).Select(x => x.Id).ToHashSet();
+                        var clinIds = clins.Where(x => taskOrderIds.Contains(x.TaskOrderId)).Select(x => x.Id).ToHashSet();
+                        var wbsItems = wbsNodes.Where(x => clinIds.Contains(x.ClinId)).ToList();
+                        var clinItems = clins.Where(x => taskOrderIds.Contains(x.TaskOrderId)).ToList();
+                        <h5>WBS</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("wbs")'>?</button>
+                        @if (wbsItems.Count == 0)
+                        {
+                            <p class="empty-state">No WBS nodes yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in wbsItems)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>@item.Code</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.Wbs, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.Wbs))
+                        {
+                            <form class="editor-form" @onsubmit="SaveWbsEditorAsync" @onsubmit:preventDefault="true">
+                                <label>CLIN</label>
+                                <select class="form-select mb-1" @bind="editorWbsClinId">
+                                    @foreach (var clin in clinItems)
+                                    {
+                                        <option value="@clin.Id">@clin.Number</option>
+                                    }
+                                </select>
+                                <label>WBS Code</label>
+                                <input class="form-control mb-1" @bind="editorWbsCode" />
+                                <label>Parent WBS</label>
+                                <select class="form-select mb-1" @bind="editorWbsParentId">
+                                    <option value="">(None)</option>
+                                    @foreach (var node in wbsItems.Where(x => x.Id != editorEntityId))
+                                    {
+                                        <option value="@node.Id.ToString()">@node.Code</option>
+                                    }
+                                </select>
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                    else if (details == DetailPanel.LaborCategories)
+                    {
+                        <h5>Labor Categories</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("labor-categories")'>?</button>
+                        var categories = pricing
+                            .Where(x => x.ContractId == contract.Id)
+                            .OrderBy(x => x.LaborCategory)
+                            .ThenBy(x => x.Site)
+                            .ToList();
+                        @if (categories.Count == 0)
+                        {
+                            <p class="empty-state">No labor category pricing yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in categories)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>@item.LaborCategory - @item.Site - @ToCurrency(item.BaseHourlyRate)</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.LaborCategories, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.LaborCategories))
+                        {
+                            <form class="editor-form" @onsubmit="SavePricingEditorAsync" @onsubmit:preventDefault="true">
+                                <label>Labor Category</label>
+                                <input class="form-control mb-1" @bind="editorPricingLaborCategory" />
+                                <label>Site</label>
+                                <select class="form-select mb-1" @bind="editorPricingSite"><option>GovernmentSite</option><option>ContractorSite</option></select>
+                                <label>Base Hourly Rate</label>
+                                <input class="form-control mb-1" @bind="editorPricingBaseRate" />
+                                <label>Escalation %</label>
+                                <input class="form-control mb-1" @bind="editorPricingEscalation" />
+                                <label>Fee %</label>
+                                <input class="form-control mb-1" @bind="editorPricingFee" />
+                                <input type="date" class="form-control mb-1" @bind="editorPricingStart" />
+                                <input type="date" class="form-control mb-1" @bind="editorPricingEnd" />
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                    else if (details == DetailPanel.ChargeCodes)
+                    {
+                        var taskOrderIds = taskOrders.Where(x => x.ContractId == contract.Id).Select(x => x.Id).ToHashSet();
+                        var clinIds = clins.Where(x => taskOrderIds.Contains(x.TaskOrderId)).Select(x => x.Id).ToHashSet();
+                        var wbsItems = wbsNodes.Where(x => clinIds.Contains(x.ClinId)).ToList();
+                        var wbsIds = wbsItems.Select(x => x.Id).ToHashSet();
+                        var chargeCodeItems = chargeCodes.Where(x => wbsIds.Contains(x.WbsNodeId)).OrderBy(x => x.Code).ToList();
+                        <h5>Charge Codes</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("charge-codes")'>?</button>
+                        @if (chargeCodeItems.Count == 0)
+                        {
+                            <p class="empty-state">No charge codes yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in chargeCodeItems)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>@item.Code (@item.CostType) @if (!item.IsActive) { <text>- Inactive</text> }</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.ChargeCodes, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.ChargeCodes))
+                        {
+                            <form class="editor-form" @onsubmit="SaveChargeCodeEditorAsync" @onsubmit:preventDefault="true">
+                                <label>WBS</label>
+                                <select class="form-select mb-1" @bind="editorChargeCodeWbsId">
+                                    @foreach (var wbs in wbsItems)
+                                    {
+                                        <option value="@wbs.Id">@wbs.Code</option>
+                                    }
+                                </select>
+                                <label>Code</label>
+                                <input class="form-control mb-1" @bind="editorChargeCodeCode" />
+                                <label>Cost Type</label>
+                                <select class="form-select mb-1" @bind="editorChargeCodeCostType">
+                                    <option>Direct</option>
+                                    <option>Indirect</option>
+                                    <option>Unallowable</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                    else if (details == DetailPanel.PerformancePeriods)
+                    {
+                        var optionItems = contractOptionYears.Where(x => x.ContractId == contract.Id).OrderBy(x => x.OptionYearNumber).ToList();
+                        <h5>Period of Performance</h5>
+                        <button type="button" class="help-btn" title="Help" @onclick='() => ShowHelp("performance-periods")'>?</button>
+                        <p class="mb-2">Base Year: <strong>@contract.BaseYearStartDate - @contract.BaseYearEndDate</strong></p>
+                        @if (optionItems.Count == 0)
+                        {
+                            <p class="empty-state">No option years yet.</p>
+                        }
+                        else
+                        {
+                            <ul class="detail-list">
+                                @foreach (var item in optionItems)
+                                {
+                                    <li class="detail-list-item">
+                                        <span>Option Year @item.OptionYearNumber: @item.StartDate - @item.EndDate</span>
+                                        <button type="button" class="icon-btn" title="Edit" @onclick="() => OpenEditEditor(contract.Id, DetailPanel.PerformancePeriods, item.Id)">&#9998;</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+
+                        @if (IsEditorOpen(contract.Id, DetailPanel.PerformancePeriods))
+                        {
+                            <form class="editor-form" @onsubmit="SaveOptionYearEditorAsync" @onsubmit:preventDefault="true">
+                                <label>Start Date</label>
+                                <input type="date" class="form-control mb-1" @bind="editorOptionYearStart" />
+                                <label>End Date</label>
+                                <input type="date" class="form-control mb-1" @bind="editorOptionYearEnd" />
+                                <button class="btn btn-sm btn-primary" type="submit" disabled="@isSavingContract">Save</button>
+                                @if (editorEntityId.HasValue)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger ms-1" type="button" @onclick="DeleteOptionYearEditorAsync" disabled="@isSavingContract">Delete</button>
+                                }
+                                <button class="btn btn-sm btn-outline-secondary ms-1" type="button" @onclick="CloseEditor">Cancel</button>
+                            </form>
+                        }
+                    }
+                </section>
+            }
+        </article>
+    }
+</div>
+
+@if (showHelp)
+{
+    <div class="help-backdrop" @onclick="CloseHelp">
+        <div class="help-modal" @onclick:stopPropagation="true">
+            <div class="help-modal-header">
+                <h5>@helpTitle</h5>
+                <button type="button" class="btn-close" aria-label="Close" @onclick="CloseHelp"></button>
+            </div>
+            <p>@helpBody</p>
+            <div class="help-modal-actions">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="CloseHelp">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly string[] piePalette = ["#4e7d52", "#84a97f", "#c9d7b2", "#8f6f48", "#d2b48c", "#6f8a9d"];
+
+    private List<Contract> contracts = [];
+    private List<TaskOrder> taskOrders = [];
+    private List<Clin> clins = [];
+    private List<WbsNode> wbsNodes = [];
+    private List<ChargeCode> chargeCodes = [];
+    private List<ContractOptionYear> contractOptionYears = [];
+    private List<ContractPricing> pricing = [];
+    private List<TimesheetLine> timesheetLines = [];
+    private List<ChargeCodeRow> chargeCodeRows = [];
+    private Dictionary<Guid, BurndownSummary> burndownByContract = [];
+    private Dictionary<Guid, DetailPanel> activeDetails = [];
+    private Guid selectedContractId;
+    private string? error;
+    private string? successMessage;
+
+    private string newContractName = string.Empty;
+    private string newContractNumber = string.Empty;
+    private string newContractBudget = "0";
+    private string newContractType = "FixedValue";
+    private bool newContractRequiresClinTracking;
+    private DateOnly newContractBaseYearStartDate = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+    private DateOnly newContractBaseYearEndDate = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(1).AddDays(-1));
+    private Guid newPricingContractId;
+    private string newPricingLaborCategory = string.Empty;
+    private string newPricingSite = "GovernmentSite";
+    private string newPricingBaseRate = "0";
+    private string newPricingEscalation = "0";
+    private string newPricingFee = "0";
+    private DateOnly newPricingStart = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly newPricingEnd = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1));
+    private Guid newTaskOrderContractId;
+    private string newTaskOrderNumber = string.Empty;
+    private string newTaskOrderBudget = "0";
+    private bool newTaskOrderRequiresClinTracking;
+    private Guid newClinTaskOrderId;
+    private string newClinNumber = string.Empty;
+    private Guid newWbsClinId;
+    private string newWbsCode = string.Empty;
+    private string newWbsParentId = string.Empty;
+    private Guid newChargeCodeWbsId;
+    private string newChargeCodeCode = string.Empty;
+    private string newChargeCodeCostType = "Direct";
+    private string updateContractNumber = string.Empty;
+    private string updateContractName = string.Empty;
+    private string updateContractBudget = "0";
+    private string updateContractType = "FixedValue";
+    private Guid? contractEditId;
+    private string contractEditName = string.Empty;
+    private string contractEditNumber = string.Empty;
+    private string contractEditBudget = "0";
+    private string contractEditType = "FixedValue";
+    private bool contractEditRequiresClinTracking;
+    private DateOnly contractEditBaseYearStartDate = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+    private DateOnly contractEditBaseYearEndDate = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(1).AddDays(-1));
+    private Guid editorContractId;
+    private DetailPanel editorPanel = DetailPanel.None;
+    private Guid? editorEntityId;
+    private string editorTaskOrderNumber = string.Empty;
+    private string editorTaskOrderBudget = "0";
+    private bool editorTaskOrderRequiresClinTracking;
+    private Guid editorClinTaskOrderId;
+    private string editorClinNumber = string.Empty;
+    private Guid editorWbsClinId;
+    private string editorWbsCode = string.Empty;
+    private string editorWbsParentId = string.Empty;
+    private Guid editorChargeCodeWbsId;
+    private string editorChargeCodeCode = string.Empty;
+    private string editorChargeCodeCostType = "Direct";
+    private string editorPricingLaborCategory = string.Empty;
+    private string editorPricingSite = "GovernmentSite";
+    private string editorPricingBaseRate = "0";
+    private string editorPricingEscalation = "0";
+    private string editorPricingFee = "0";
+    private DateOnly editorPricingStart = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly editorPricingEnd = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1));
+    private DateOnly editorOptionYearStart = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+    private DateOnly editorOptionYearEnd = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(1).AddDays(-1));
+
+    private bool showHelp;
+    private string helpTitle = string.Empty;
+    private string helpBody = string.Empty;
+    private bool isSavingContract;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadDataAsync();
+    }
+
+    private async Task ReloadDataAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            contracts = Repository.Query<Contract>(tenantId).OrderBy(x => x.ContractNumber).ToList();
+            taskOrders = Repository.Query<TaskOrder>(tenantId).OrderBy(x => x.Number).ToList();
+            clins = Repository.Query<Clin>(tenantId).OrderBy(x => x.Number).ToList();
+            wbsNodes = Repository.Query<WbsNode>(tenantId).OrderBy(x => x.Code).ToList();
+            chargeCodes = Repository.Query<ChargeCode>(tenantId).OrderBy(x => x.Code).ToList();
+            contractOptionYears = Repository.Query<ContractOptionYear>(tenantId).OrderBy(x => x.OptionYearNumber).ToList();
+            pricing = Repository.Query<ContractPricing>(tenantId).OrderBy(x => x.LaborCategory).ToList();
+            timesheetLines = Repository.Query<TimesheetLine>(tenantId).OrderBy(x => x.WorkDate).ToList();
+
+            BuildChargeCodeRows();
+            BuildBurndownSummaries();
+            EnsureSelections();
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void EnsureSelections()
+    {
+        if (selectedContractId == Guid.Empty || contracts.All(x => x.Id != selectedContractId))
+        {
+            selectedContractId = contracts.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+
+        if (newPricingContractId == Guid.Empty || contracts.All(x => x.Id != newPricingContractId))
+        {
+            newPricingContractId = contracts.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+
+        if (newTaskOrderContractId == Guid.Empty || contracts.All(x => x.Id != newTaskOrderContractId))
+        {
+            newTaskOrderContractId = contracts.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+
+        if (newClinTaskOrderId == Guid.Empty || taskOrders.All(x => x.Id != newClinTaskOrderId))
+        {
+            newClinTaskOrderId = taskOrders.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+
+        if (newWbsClinId == Guid.Empty || clins.All(x => x.Id != newWbsClinId))
+        {
+            newWbsClinId = clins.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+
+        if (newChargeCodeWbsId == Guid.Empty || wbsNodes.All(x => x.Id != newChargeCodeWbsId))
+        {
+            newChargeCodeWbsId = wbsNodes.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+    }
+
+    private List<PieSlice> BuildPieSlices(Guid contractId)
+    {
+        var grouped = pricing
+            .Where(x => x.ContractId == contractId)
+            .GroupBy(x => x.LaborCategory)
+            .Select(x => new { Label = x.Key, Value = x.Sum(v => v.BaseHourlyRate) })
+            .Where(x => x.Value > 0)
+            .OrderByDescending(x => x.Value)
+            .ToList();
+
+        var total = grouped.Sum(x => x.Value);
+        if (total <= 0)
+        {
+            return [];
+        }
+
+        var result = new List<PieSlice>(grouped.Count);
+        var start = -90d;
+        for (var i = 0; i < grouped.Count; i++)
+        {
+            var item = grouped[i];
+            var fraction = (double)(item.Value / total);
+            var sweep = Math.Max(0.001d, 360d * fraction);
+            var end = start + sweep;
+            var path = BuildPieArcPath(60d, 60d, 48d, start, end);
+            var percent = fraction * 100d;
+            result.Add(new PieSlice
+            {
+                Label = item.Label,
+                Color = piePalette[i % piePalette.Length],
+                Path = path,
+                PercentageLabel = $"{percent:0.#}%"
+            });
+            start = end;
+        }
+
+        return result;
+    }
+
+    private static string BuildPieArcPath(double cx, double cy, double radius, double startAngleDeg, double endAngleDeg)
+    {
+        var startRad = Math.PI * startAngleDeg / 180d;
+        var endRad = Math.PI * endAngleDeg / 180d;
+        var x1 = cx + radius * Math.Cos(startRad);
+        var y1 = cy + radius * Math.Sin(startRad);
+        var x2 = cx + radius * Math.Cos(endRad);
+        var y2 = cy + radius * Math.Sin(endRad);
+        var largeArc = endAngleDeg - startAngleDeg > 180d ? 1 : 0;
+
+        return string.Create(CultureInfo.InvariantCulture, $"M {cx:0.###} {cy:0.###} L {x1:0.###} {y1:0.###} A {radius:0.###} {radius:0.###} 0 {largeArc} 1 {x2:0.###} {y2:0.###} Z");
+    }
+
+    private static string BuildBurndownPolyline(BurndownSummary summary)
+    {
+        var points = summary.Points.OrderBy(x => x.Date).ToList();
+        if (points.Count == 0)
+        {
+            return "24,136 296,136";
+        }
+
+        if (points.Count == 1)
+        {
+            points.Add(new BurndownPoint
+            {
+                Date = points[0].Date,
+                SpentAmount = points[0].SpentAmount,
+                RemainingAmount = points[0].RemainingAmount
+            });
+        }
+
+        const double xMin = 24d;
+        const double xMax = 296d;
+        const double yMin = 20d;
+        const double yMax = 136d;
+        var max = summary.BudgetAmount > 0 ? summary.BudgetAmount : Math.Max(1m, points.Max(x => x.RemainingAmount));
+        var span = xMax - xMin;
+
+        var plotPoints = new List<string>(points.Count);
+        for (var i = 0; i < points.Count; i++)
+        {
+            var pctX = points.Count == 1 ? 0d : (double)i / (points.Count - 1);
+            var remaining = points[i].RemainingAmount;
+            var pctY = max <= 0 ? 0d : (double)(remaining / max);
+            pctY = Math.Clamp(pctY, 0d, 1d);
+
+            var x = xMin + (span * pctX);
+            var y = yMax - ((yMax - yMin) * pctY);
+            plotPoints.Add(string.Create(CultureInfo.InvariantCulture, $"{x:0.##},{y:0.##}"));
+        }
+
+        return string.Join(" ", plotPoints);
+    }
+
+    private static string ToCurrency(decimal value) => value.ToString("C2", CultureInfo.CurrentCulture);
+
+    private void ToggleDetails(Guid contractId, DetailPanel panel)
+    {
+        var current = activeDetails.TryGetValue(contractId, out var existing) ? existing : DetailPanel.None;
+        activeDetails[contractId] = current == panel ? DetailPanel.None : panel;
+    }
+
+    private bool IsEditorOpen(Guid contractId, DetailPanel panel)
+    {
+        return editorContractId == contractId && editorPanel == panel;
+    }
+
+    private void OpenAddEditor(Guid contractId, DetailPanel panel)
+    {
+        activeDetails[contractId] = panel;
+        editorContractId = contractId;
+        editorPanel = panel;
+        editorEntityId = null;
+        SeedEditorForAdd(contractId, panel);
+    }
+
+    private void OpenEditEditor(Guid contractId, DetailPanel panel, Guid entityId)
+    {
+        activeDetails[contractId] = panel;
+        editorContractId = contractId;
+        editorPanel = panel;
+        editorEntityId = entityId;
+        SeedEditorForEdit(contractId, panel, entityId);
+    }
+
+    private void CloseEditor()
+    {
+        editorContractId = Guid.Empty;
+        editorPanel = DetailPanel.None;
+        editorEntityId = null;
+    }
+
+    private void OpenContractEdit(Guid contractId)
+    {
+        var contract = contracts.FirstOrDefault(x => x.Id == contractId);
+        if (contract is null)
+        {
+            return;
+        }
+
+        contractEditId = contractId;
+        contractEditName = contract.Name;
+        contractEditNumber = contract.ContractNumber;
+        contractEditBudget = contract.BudgetAmount.ToString(CultureInfo.InvariantCulture);
+        contractEditType = contract.ContractType.ToString();
+        contractEditRequiresClinTracking = contract.RequiresClinTracking;
+        contractEditBaseYearStartDate = contract.BaseYearStartDate;
+        contractEditBaseYearEndDate = contract.BaseYearEndDate;
+    }
+
+    private void CloseContractEdit()
+    {
+        contractEditId = null;
+    }
+
+    private async Task SaveContractEditAsync()
+    {
+        if (!TryBeginAction() || !contractEditId.HasValue) return;
+        try
+        {
+            ComplianceService.UpdateContract(
+                contractEditId.Value,
+                contractEditNumber.Trim(),
+                contractEditName.Trim(),
+                ParseDecimalOrZero(contractEditBudget),
+                ParseContractType(contractEditType),
+                contractEditBaseYearStartDate,
+                contractEditBaseYearEndDate,
+                contractEditRequiresClinTracking);
+            successMessage = "Contract updated.";
+            contractEditId = null;
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private void SeedEditorForAdd(Guid contractId, DetailPanel panel)
+    {
+        if (panel == DetailPanel.TaskOrders)
+        {
+            editorTaskOrderNumber = string.Empty;
+            editorTaskOrderBudget = "0";
+            editorTaskOrderRequiresClinTracking = false;
+        }
+        else if (panel == DetailPanel.Clins)
+        {
+            editorClinTaskOrderId = taskOrders.FirstOrDefault(x => x.ContractId == contractId)?.Id ?? Guid.Empty;
+            editorClinNumber = string.Empty;
+        }
+        else if (panel == DetailPanel.Wbs)
+        {
+            var taskIds = taskOrders.Where(x => x.ContractId == contractId).Select(x => x.Id).ToHashSet();
+            var contractClins = clins.Where(x => taskIds.Contains(x.TaskOrderId)).ToList();
+            editorWbsClinId = contractClins.FirstOrDefault()?.Id ?? Guid.Empty;
+            editorWbsCode = string.Empty;
+            editorWbsParentId = string.Empty;
+        }
+        else if (panel == DetailPanel.ChargeCodes)
+        {
+            var taskIds = taskOrders.Where(x => x.ContractId == contractId).Select(x => x.Id).ToHashSet();
+            var clinIds = clins.Where(x => taskIds.Contains(x.TaskOrderId)).Select(x => x.Id).ToHashSet();
+            editorChargeCodeWbsId = wbsNodes.FirstOrDefault(x => clinIds.Contains(x.ClinId))?.Id ?? Guid.Empty;
+            editorChargeCodeCode = string.Empty;
+            editorChargeCodeCostType = "Direct";
+        }
+        else if (panel == DetailPanel.LaborCategories)
+        {
+            editorPricingLaborCategory = string.Empty;
+            editorPricingSite = "GovernmentSite";
+            editorPricingBaseRate = "0";
+            editorPricingEscalation = "0";
+            editorPricingFee = "0";
+            editorPricingStart = DateOnly.FromDateTime(DateTime.UtcNow);
+            editorPricingEnd = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1));
+        }
+        else if (panel == DetailPanel.PerformancePeriods)
+        {
+            var contract = contracts.FirstOrDefault(x => x.Id == contractId);
+            editorOptionYearStart = contract?.BaseYearEndDate.AddDays(1) ?? DateOnly.FromDateTime(DateTime.UtcNow.Date);
+            editorOptionYearEnd = editorOptionYearStart.AddYears(1).AddDays(-1);
+        }
+    }
+
+    private void SeedEditorForEdit(Guid contractId, DetailPanel panel, Guid entityId)
+    {
+        if (panel == DetailPanel.TaskOrders)
+        {
+            var taskOrder = taskOrders.First(x => x.Id == entityId);
+            editorTaskOrderNumber = taskOrder.Number;
+            editorTaskOrderBudget = taskOrder.BudgetAmount.ToString(CultureInfo.InvariantCulture);
+            editorTaskOrderRequiresClinTracking = taskOrder.RequiresClinTracking;
+        }
+        else if (panel == DetailPanel.Clins)
+        {
+            var clin = clins.First(x => x.Id == entityId);
+            editorClinTaskOrderId = clin.TaskOrderId;
+            editorClinNumber = clin.Number;
+        }
+        else if (panel == DetailPanel.Wbs)
+        {
+            var wbs = wbsNodes.First(x => x.Id == entityId);
+            editorWbsClinId = wbs.ClinId;
+            editorWbsCode = wbs.Code;
+            editorWbsParentId = wbs.ParentWbsNodeId?.ToString() ?? string.Empty;
+        }
+        else if (panel == DetailPanel.ChargeCodes)
+        {
+            var chargeCode = chargeCodes.First(x => x.Id == entityId);
+            editorChargeCodeWbsId = chargeCode.WbsNodeId;
+            editorChargeCodeCode = chargeCode.Code;
+            editorChargeCodeCostType = chargeCode.CostType.ToString();
+        }
+        else if (panel == DetailPanel.LaborCategories)
+        {
+            var contractPricing = pricing.First(x => x.Id == entityId);
+            editorPricingLaborCategory = contractPricing.LaborCategory;
+            editorPricingSite = contractPricing.Site.ToString();
+            editorPricingBaseRate = contractPricing.BaseHourlyRate.ToString(CultureInfo.InvariantCulture);
+            editorPricingEscalation = contractPricing.EscalationPercent.ToString(CultureInfo.InvariantCulture);
+            editorPricingFee = contractPricing.FeePercent.ToString(CultureInfo.InvariantCulture);
+            editorPricingStart = contractPricing.EffectiveStartDate;
+            editorPricingEnd = contractPricing.EffectiveEndDate;
+        }
+        else if (panel == DetailPanel.PerformancePeriods)
+        {
+            var option = contractOptionYears.First(x => x.Id == entityId);
+            editorOptionYearStart = option.StartDate;
+            editorOptionYearEnd = option.EndDate;
+        }
+    }
+
+    private async Task SaveTaskOrderEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            if (editorEntityId.HasValue)
+            {
+                ComplianceService.UpdateTaskOrder(editorEntityId.Value, editorTaskOrderNumber.Trim(), ParseDecimalOrZero(editorTaskOrderBudget), editorTaskOrderRequiresClinTracking);
+                successMessage = "Task order updated.";
+            }
+            else
+            {
+                ComplianceService.CreateTaskOrder(editorContractId, editorTaskOrderNumber.Trim(), ParseDecimalOrZero(editorTaskOrderBudget), editorTaskOrderRequiresClinTracking);
+                successMessage = "Task order created.";
+            }
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task SaveClinEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            if (editorEntityId.HasValue)
+            {
+                ComplianceService.UpdateClin(editorEntityId.Value, editorClinNumber.Trim());
+                successMessage = "CLIN updated.";
+            }
+            else
+            {
+                ComplianceService.CreateClin(editorClinTaskOrderId, editorClinNumber.Trim());
+                successMessage = "CLIN created.";
+            }
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task SaveWbsEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            var parent = Guid.TryParse(editorWbsParentId, out var parsedParent) ? parsedParent : (Guid?)null;
+            if (editorEntityId.HasValue)
+            {
+                ComplianceService.UpdateWbs(editorEntityId.Value, editorWbsCode.Trim(), parent);
+                successMessage = "WBS updated.";
+            }
+            else
+            {
+                ComplianceService.CreateWbs(editorWbsClinId, editorWbsCode.Trim(), parent);
+                successMessage = "WBS created.";
+            }
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task SaveChargeCodeEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            var costType = ParseCostType(editorChargeCodeCostType);
+            if (editorEntityId.HasValue)
+            {
+                ComplianceService.UpdateChargeCode(editorEntityId.Value, editorChargeCodeCode.Trim(), costType);
+                successMessage = "Charge code updated.";
+            }
+            else
+            {
+                ComplianceService.CreateChargeCode(editorChargeCodeWbsId, editorChargeCodeCode.Trim(), costType);
+                successMessage = "Charge code created.";
+            }
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task SavePricingEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.AddContractPricing(
+                editorContractId,
+                editorPricingLaborCategory.Trim(),
+                ParseLaborSite(editorPricingSite),
+                ParseDecimalOrZero(editorPricingBaseRate),
+                ParseDecimalOrZero(editorPricingEscalation),
+                ParseDecimalOrZero(editorPricingFee),
+                editorPricingStart,
+                editorPricingEnd);
+            successMessage = editorEntityId.HasValue ? "Pricing revision added." : "Pricing added.";
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task SaveOptionYearEditorAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            if (editorEntityId.HasValue)
+            {
+                ComplianceService.UpdateOptionYear(editorEntityId.Value, editorOptionYearStart, editorOptionYearEnd);
+                successMessage = "Option year updated.";
+            }
+            else
+            {
+                ComplianceService.AddOptionYear(editorContractId, editorOptionYearStart, editorOptionYearEnd);
+                successMessage = "Option year added.";
+            }
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task DeleteOptionYearEditorAsync()
+    {
+        if (!TryBeginAction() || !editorEntityId.HasValue) return;
+        try
+        {
+            ComplianceService.DeleteOptionYear(editorEntityId.Value);
+            successMessage = "Option year deleted.";
+            CloseEditor();
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private void ShowHelp(string key)
+    {
+        (helpTitle, helpBody) = key switch
+        {
+            "new-contract" => ("New Contract Card", "Use this editable card to enter a contract name, number, budget, and contract type. Submitting creates the contract immediately."),
+            "contract-card" => ("Contract Card", "Each card summarizes one contract. Title and number identify the award; charts provide labor mix and burn status at a glance."),
+            "labor-allocation" => ("Labor Allocation Pie", "This chart groups pricing rows by labor category and visualizes each category's share based on configured base hourly rates."),
+            "burndown" => ("Burndown Chart", "This line tracks remaining budget over time using charged time converted to dollars with the contract's average configured labor rate."),
+            "task-orders" => ("Task Orders (TO)", "Task Orders are work authorizations issued under the contract. They break contract scope into funded chunks with their own budgets. Hierarchy: Contract -> Task Order."),
+            "clins" => ("CLIN (Contract Line Item Number)", "CLINs represent billable line items under a Task Order. Use CLINs to track deliverables/services and align billing structure. Hierarchy: Contract -> Task Order -> CLIN."),
+            "wbs" => ("WBS (Work Breakdown Structure)", "WBS nodes decompose CLIN work into planning/execution elements. Parent/child WBS supports rollups and detailed cost tracking. Hierarchy: Contract -> Task Order -> CLIN -> WBS."),
+            "charge-codes" => ("Charge Codes / Cost Centers", "Charge Codes are the IDs users charge labor/expenses against. They link to WBS and carry cost type and lifecycle (active/inactive). Hierarchy: Contract -> Task Order -> CLIN -> WBS -> Charge Code."),
+            "labor-categories" => ("Labor Categories & Pricing", "Labor categories define rate cards by role, site (government vs contractor), escalation, and fee. These rates are used for pricing visibility and burndown calculations."),
+            "performance-periods" => ("Period of Performance", "Base Year is the initial performance period. Option Years extend performance in additional periods that can be exercised later. Use this section to manage base and option year date ranges."),
+            _ => ("Help", "No help topic found.")
+        };
+
+        showHelp = true;
+    }
+
+    private void CloseHelp()
+    {
+        showHelp = false;
+    }
+
+    private async Task CreateContractAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(newContractName) || string.IsNullOrWhiteSpace(newContractNumber))
+            {
+                throw new InvalidOperationException("Contract name and contract number are required.");
+            }
+
+            ComplianceService.CreateContract(
+                newContractNumber.Trim(),
+                newContractName.Trim(),
+                ParseDecimalOrZero(newContractBudget),
+                ParseContractType(newContractType),
+                newContractBaseYearStartDate,
+                newContractBaseYearEndDate,
+                newContractRequiresClinTracking);
+            newContractName = string.Empty;
+            newContractNumber = string.Empty;
+            newContractBudget = "0";
+            newContractType = "FixedValue";
+            newContractRequiresClinTracking = false;
+            newContractBaseYearStartDate = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+            newContractBaseYearEndDate = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddYears(1).AddDays(-1));
+            successMessage = "Contract created.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task AddPricingAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.AddContractPricing(
+                newPricingContractId,
+                newPricingLaborCategory.Trim(),
+                ParseLaborSite(newPricingSite),
+                ParseDecimalOrZero(newPricingBaseRate),
+                ParseDecimalOrZero(newPricingEscalation),
+                ParseDecimalOrZero(newPricingFee),
+                newPricingStart,
+                newPricingEnd);
+            newPricingLaborCategory = string.Empty;
+            newPricingBaseRate = "0";
+            newPricingEscalation = "0";
+            newPricingFee = "0";
+            successMessage = "Contract pricing added.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task CreateTaskOrderAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.CreateTaskOrder(newTaskOrderContractId, newTaskOrderNumber.Trim(), ParseDecimalOrZero(newTaskOrderBudget), newTaskOrderRequiresClinTracking);
+            newTaskOrderNumber = string.Empty;
+            newTaskOrderBudget = "0";
+            newTaskOrderRequiresClinTracking = false;
+            successMessage = "Task order created.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task CreateClinAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.CreateClin(newClinTaskOrderId, newClinNumber.Trim());
+            newClinNumber = string.Empty;
+            successMessage = "CLIN created.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task CreateWbsAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            Guid? parent = Guid.TryParse(newWbsParentId, out var parsed) ? parsed : null;
+            ComplianceService.CreateWbs(newWbsClinId, newWbsCode.Trim(), parent);
+            newWbsCode = string.Empty;
+            newWbsParentId = string.Empty;
+            successMessage = "WBS created.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task CreateChargeCodeAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.CreateChargeCode(newChargeCodeWbsId, newChargeCodeCode.Trim(), ParseCostType(newChargeCodeCostType));
+            newChargeCodeCode = string.Empty;
+            successMessage = "Charge code created.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task ToggleChargeCodeAsync(Guid chargeCodeId, bool isActive)
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.SetChargeCodeActive(chargeCodeId, isActive, "Lifecycle toggle from portal");
+            successMessage = "Charge code lifecycle updated.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task DeleteChargeCodeAsync(Guid chargeCodeId)
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.DeleteChargeCode(chargeCodeId);
+            successMessage = "Charge code deleted.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task UpdateContractAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            var current = contracts.FirstOrDefault(x => x.Id == selectedContractId) ?? throw new InvalidOperationException("Contract not found.");
+            ComplianceService.UpdateContract(
+                selectedContractId,
+                string.IsNullOrWhiteSpace(updateContractNumber) ? current.ContractNumber : updateContractNumber.Trim(),
+                string.IsNullOrWhiteSpace(updateContractName) ? current.Name : updateContractName.Trim(),
+                string.IsNullOrWhiteSpace(updateContractBudget) ? current.BudgetAmount : ParseDecimalOrZero(updateContractBudget),
+                ParseContractType(updateContractType),
+                current.BaseYearStartDate,
+                current.BaseYearEndDate,
+                current.RequiresClinTracking);
+            updateContractNumber = string.Empty;
+            updateContractName = string.Empty;
+            updateContractBudget = "0";
+            updateContractType = "FixedValue";
+            successMessage = "Contract updated.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private async Task DeleteContractAsync()
+    {
+        if (!TryBeginAction()) return;
+        try
+        {
+            ComplianceService.DeleteContract(selectedContractId);
+            successMessage = "Contract deleted.";
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isSavingContract = false;
+        }
+    }
+
+    private bool TryBeginAction()
+    {
+        if (isSavingContract) return false;
+        isSavingContract = true;
+        error = null;
+        successMessage = null;
+        return true;
+    }
+
+    private static decimal ParseDecimalOrZero(string? input)
+    {
+        return decimal.TryParse(input, NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
+            || decimal.TryParse(input, NumberStyles.Number, CultureInfo.CurrentCulture, out value)
+            ? value
+            : 0m;
+    }
+
+    private static ContractType ParseContractType(string value) => Enum.TryParse<ContractType>(value, true, out var result) ? result : ContractType.FixedValue;
+    private static LaborSite ParseLaborSite(string value) => Enum.TryParse<LaborSite>(value, true, out var result) ? result : LaborSite.GovernmentSite;
+    private static CostType ParseCostType(string value) => Enum.TryParse<CostType>(value, true, out var result) ? result : CostType.Direct;
+
+    private void BuildChargeCodeRows()
+    {
+        var wbsById = wbsNodes.ToDictionary(x => x.Id);
+        var clinById = clins.ToDictionary(x => x.Id);
+        var taskById = taskOrders.ToDictionary(x => x.Id);
+        var contractById = contracts.ToDictionary(x => x.Id);
+
+        chargeCodeRows = chargeCodes
+            .Select(cc =>
+            {
+                if (!wbsById.TryGetValue(cc.WbsNodeId, out var wbs)) return null;
+                if (!clinById.TryGetValue(wbs.ClinId, out var clin)) return null;
+                if (!taskById.TryGetValue(clin.TaskOrderId, out var task)) return null;
+                if (!contractById.TryGetValue(task.ContractId, out var contract)) return null;
+                return new ChargeCodeRow
+                {
+                    Id = cc.Id,
+                    ContractNumber = contract.ContractNumber,
+                    ContractType = contract.ContractType.ToString(),
+                    TaskOrder = task.Number,
+                    Clin = clin.Number,
+                    Wbs = wbs.Code,
+                    ChargeCode = cc.Code,
+                    IsActive = cc.IsActive
+                };
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToList();
+    }
+
+    private void BuildBurndownSummaries()
+    {
+        var wbsById = wbsNodes.ToDictionary(x => x.Id);
+        var clinById = clins.ToDictionary(x => x.Id);
+        var taskById = taskOrders.ToDictionary(x => x.Id);
+
+        var chargeCodeToContractId = chargeCodes.ToDictionary(
+            x => x.Id,
+            x =>
+            {
+                if (!wbsById.TryGetValue(x.WbsNodeId, out var wbsNode)) return (Guid?)null;
+                if (!clinById.TryGetValue(wbsNode.ClinId, out var clin)) return (Guid?)null;
+                if (!taskById.TryGetValue(clin.TaskOrderId, out var taskOrder)) return (Guid?)null;
+                return taskOrder.ContractId;
+            });
+
+        var averageRateByContract = pricing.GroupBy(x => x.ContractId).ToDictionary(x => x.Key, x => x.Average(p => p.BaseHourlyRate));
+
+        var lineGroups = timesheetLines
+            .Select(x =>
+            {
+                if (!chargeCodeToContractId.TryGetValue(x.ChargeCodeId, out var contractId) || contractId is null) return null;
+                var rate = averageRateByContract.TryGetValue(contractId.Value, out var avgRate) ? avgRate : 0m;
+                return new { ContractId = contractId.Value, x.WorkDate, Amount = (x.Minutes / 60m) * rate };
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .GroupBy(x => x.ContractId)
+            .ToDictionary(x => x.Key, x => x.GroupBy(g => g.WorkDate).OrderBy(g => g.Key).ToList());
+
+        burndownByContract = contracts.ToDictionary(
+            contract => contract.Id,
+            contract =>
+            {
+                var cumulative = 0m;
+                var points = new List<BurndownPoint>();
+                if (lineGroups.TryGetValue(contract.Id, out var dateGroups))
+                {
+                    foreach (var dateGroup in dateGroups)
+                    {
+                        cumulative += dateGroup.Sum(v => v.Amount);
+                        points.Add(new BurndownPoint { Date = dateGroup.Key, SpentAmount = Math.Round(cumulative, 2), RemainingAmount = Math.Round(contract.BudgetAmount - cumulative, 2) });
+                    }
+                }
+
+                if (points.Count == 0)
+                {
+                    points.Add(new BurndownPoint { Date = DateOnly.FromDateTime(DateTime.UtcNow), SpentAmount = 0m, RemainingAmount = contract.BudgetAmount });
+                }
+
+                return new BurndownSummary
+                {
+                    ContractId = contract.Id,
+                    BudgetAmount = contract.BudgetAmount,
+                    SpentAmount = Math.Round(cumulative, 2),
+                    RemainingAmount = Math.Round(contract.BudgetAmount - cumulative, 2),
+                    Points = points
+                };
+            });
+    }
+
+    private sealed class ChargeCodeRow
+    {
+        public Guid Id { get; set; }
+        public string ContractNumber { get; set; } = string.Empty;
+        public string ContractType { get; set; } = string.Empty;
+        public string TaskOrder { get; set; } = string.Empty;
+        public string Clin { get; set; } = string.Empty;
+        public string Wbs { get; set; } = string.Empty;
+        public string ChargeCode { get; set; } = string.Empty;
+        public bool IsActive { get; set; }
+    }
+
+    private sealed class PricingRow
+    {
+        public Guid ContractId { get; set; }
+        public string ContractNumber { get; set; } = string.Empty;
+        public string LaborCategory { get; set; } = string.Empty;
+        public string Site { get; set; } = string.Empty;
+        public decimal BaseHourlyRate { get; set; }
+        public decimal EscalationPercent { get; set; }
+        public decimal FeePercent { get; set; }
+    }
+
+    private sealed class BurndownSummary
+    {
+        public Guid ContractId { get; set; }
+        public decimal BudgetAmount { get; set; }
+        public decimal SpentAmount { get; set; }
+        public decimal RemainingAmount { get; set; }
+        public List<BurndownPoint> Points { get; set; } = [];
+    }
+
+    private sealed class BurndownPoint
+    {
+        public DateOnly Date { get; set; }
+        public decimal SpentAmount { get; set; }
+        public decimal RemainingAmount { get; set; }
+    }
+
+    private sealed class PieSlice
+    {
+        public string Label { get; set; } = string.Empty;
+        public string Color { get; set; } = string.Empty;
+        public string Path { get; set; } = string.Empty;
+        public string PercentageLabel { get; set; } = string.Empty;
+    }
+
+    private enum DetailPanel
+    {
+        None,
+        Clins,
+        LaborCategories,
+        TaskOrders,
+        Wbs,
+        ChargeCodes,
+        PerformancePeriods
+    }
+}

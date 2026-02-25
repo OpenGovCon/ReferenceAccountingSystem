@@ -1,0 +1,148 @@
+@page "/timereporter"
+@attribute [Authorize(Roles = "TimeReporter")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Application.Services
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+@inject NotificationService NotificationsService
+
+<h2>Time Reporter Dashboard</h2>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+else
+{
+    @if (currentWeekCard is null)
+    {
+        <div class="alert alert-warning">
+            No time card exists for this week (@currentWeekStart - @currentWeekEnd). Create one now and submit before the week closes.
+            <a href="/timereporter/timecards" class="ms-2">Open Time Cards</a>
+        </div>
+    }
+    else if (currentWeekCard.Status == GovConMoney.Domain.Enums.TimesheetStatus.Draft)
+    {
+        <div class="alert alert-warning">
+            Reminder: your current week time card is still <strong>Draft</strong> and needs submission.
+            <a href="/timereporter/timecards?timesheetId=@currentWeekCard.Id" class="ms-2">Open Current Time Card</a>
+        </div>
+    }
+    else if (currentWeekCard.Status == GovConMoney.Domain.Enums.TimesheetStatus.Submitted)
+    {
+        <div class="alert alert-info">
+            Current week time card is submitted and awaiting approval.
+            <a href="/timereporter/timecards?timesheetId=@currentWeekCard.Id" class="ms-2">View Current Time Card</a>
+        </div>
+    }
+    else if (currentWeekCard.Status == GovConMoney.Domain.Enums.TimesheetStatus.Approved)
+    {
+        <div class="alert alert-success">
+            Current week time card is approved.
+            <a href="/timereporter/timecards?timesheetId=@currentWeekCard.Id" class="ms-2">View Current Time Card</a>
+        </div>
+    }
+
+    @if (inboxNotifications.Count > 0)
+    {
+        <div class="card mb-3">
+            <div class="card-header">Recent Notifications</div>
+            <div class="card-body">
+                <ul class="mb-2">
+                    @foreach (var n in inboxNotifications)
+                    {
+                        <li><strong>@n.Title:</strong> @n.Message</li>
+                    }
+                </ul>
+                <a href="/notifications">Open Notifications</a>
+            </div>
+        </div>
+    }
+
+    <div class="card mb-3">
+        <div class="card-header">Current Week</div>
+        <div class="card-body">
+            <p class="mb-1"><strong>Week:</strong> @currentWeekStart - @currentWeekEnd</p>
+            @if (currentWeekCard is not null)
+            {
+                <p class="mb-2"><strong>Status:</strong> @currentWeekCard.Status</p>
+                <a class="btn btn-primary btn-sm" href="/timereporter/timecards?timesheetId=@currentWeekCard.Id">Open Current Time Card</a>
+            }
+            else
+            {
+                <a class="btn btn-primary btn-sm" href="/timereporter/timecards">Create/Open Time Card</a>
+            }
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">Rejections and Corrections</div>
+        <div class="card-body">
+            <p class="mb-2">
+                Time cards can be blocked at submit time by compliance validation (for example duplicate work-period/cost-center conditions). Review flagged details in Time Card Status, then update and resubmit.
+            </p>
+            <p class="mb-2">
+                Rejected expenses are returned for update and resubmission from the Time Cards page.
+            </p>
+            <ul class="mb-0">
+                <li><a href="/timereporter/status">Open Time Card Status</a> (check compliance flags)</li>
+                <li><a href="/timereporter/corrections">Open Corrections</a> (@correctionCount items)</li>
+                <li><a href="/timereporter/timecards">Open Time Cards</a> (@rejectedExpenseCount rejected expenses)</li>
+            </ul>
+        </div>
+    </div>
+
+    <ul>
+        <li><a href="/timereporter/timecards">Time Cards</a></li>
+        <li><a href="/timereporter/status">Time Card Status</a></li>
+        <li><a href="/timereporter/corrections">Corrections</a></li>
+    </ul>
+}
+
+@code {
+    private DateOnly currentWeekStart;
+    private DateOnly currentWeekEnd;
+    private Timesheet? currentWeekCard;
+    private List<UserNotification> inboxNotifications = [];
+    private int rejectedExpenseCount;
+    private int correctionCount;
+    private string? error;
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var tenantId = TenantContext.TenantId;
+            var userId = TenantContext.UserId;
+            var config = Repository.Query<WorkPeriodConfiguration>(tenantId).FirstOrDefault();
+            var startDay = config?.WeekStartDay ?? (int)DayOfWeek.Monday;
+            var periodLength = config?.PeriodLengthDays ?? 7;
+            var daysSinceConfiguredStart = ((int)today.DayOfWeek - startDay + 7) % 7;
+            currentWeekStart = today.AddDays(-daysSinceConfiguredStart);
+            currentWeekEnd = currentWeekStart.AddDays(periodLength - 1);
+            var userCards = Repository.Query<Timesheet>(tenantId).Where(x => x.UserId == userId);
+
+            currentWeekCard = userCards
+                .Where(x => x.PeriodStart <= currentWeekEnd && x.PeriodEnd >= currentWeekStart)
+                .OrderByDescending(x => x.VersionNumber)
+                .ThenByDescending(x => x.PeriodEnd)
+                .FirstOrDefault();
+
+            var userCardIds = userCards.Select(x => x.Id).ToHashSet();
+            rejectedExpenseCount = Repository.Query<TimesheetExpense>(tenantId)
+                .Count(x => userCardIds.Contains(x.TimesheetId) && x.Status == ExpenseStatus.Rejected);
+
+            correctionCount = Repository.Query<CorrectionRequest>(tenantId)
+                .Count(x => userCardIds.Contains(x.TimesheetId));
+
+            inboxNotifications = NotificationsService.GetInbox(includeRead: false, take: 5).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

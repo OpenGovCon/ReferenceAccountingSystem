@@ -1,0 +1,112 @@
+@page "/accountant/reports/clin-summary"
+@attribute [Authorize(Roles = "Accountant")]
+@inject GovConMoney.Application.Services.ReportingService Reporting
+@inject GovConMoney.Application.Abstractions.IRepository Repository
+@inject GovConMoney.Application.Abstractions.ITenantContext TenantContext
+
+<h3>Accountant - CLIN Summary Report</h3>
+
+<form method="get" action="/accountant/reports/clin-summary" class="row g-2 align-items-end">
+    <div class="col-md-3">
+        <label class="form-label">Period Start</label>
+        <input class="form-control" type="date" name="periodStart" value="@periodStartString" />
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Period End</label>
+        <input class="form-control" type="date" name="periodEnd" value="@periodEndString" />
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Contract</label>
+        <select class="form-select" name="contractId">
+            <option value="">All contracts</option>
+            @foreach (var contract in contracts)
+            {
+                if (contract.Id == contractId)
+                {
+                    <option value="@contract.Id" selected>@contract.ContractNumber</option>
+                }
+                else
+                {
+                    <option value="@contract.Id">@contract.ContractNumber</option>
+                }
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary w-100" type="submit">Filter</button>
+    </div>
+</form>
+
+<p class="mt-3">
+    API Export:
+    <a href="@JsonLink()" target="_blank">JSON</a> |
+    <a href="@CsvLink()" target="_blank">CSV</a>
+</p>
+
+<table class="table mt-2">
+    <thead>
+        <tr>
+            <th>Contract</th>
+            <th>Task Order</th>
+            <th>CLIN</th>
+            <th>WBS</th>
+            <th>Charge Code</th>
+            <th>Cost Type</th>
+            <th>Hours</th>
+            <th>Labor $</th>
+            <th>Expense $</th>
+            <th>Burden $</th>
+            <th>Total $</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.ContractNumber</td>
+            <td>@row.TaskOrderNumber</td>
+            <td>@row.ClinNumber</td>
+            <td>@row.WbsCode</td>
+            <td>@row.ChargeCode</td>
+            <td>@row.CostType</td>
+            <td>@row.LaborHours</td>
+            <td>@row.LaborDollars</td>
+            <td>@row.ExpenseDollars</td>
+            <td>@row.AppliedBurdenDollars</td>
+            <td>@row.TotalDollars</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public DateOnly? periodStart { get; set; }
+    [SupplyParameterFromQuery] public DateOnly? periodEnd { get; set; }
+    [SupplyParameterFromQuery] public Guid? contractId { get; set; }
+
+    private string? periodStartString => periodStart?.ToString("yyyy-MM-dd");
+    private string? periodEndString => periodEnd?.ToString("yyyy-MM-dd");
+    private IReadOnlyList<GovConMoney.Application.Models.ClinSummaryRow> rows = [];
+    private List<GovConMoney.Domain.Entities.Contract> contracts = [];
+
+    protected override void OnParametersSet()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        periodStart ??= new DateOnly(today.Year, today.Month, 1);
+        periodEnd ??= periodStart.Value.AddMonths(1).AddDays(-1);
+
+        contracts = Repository.Query<GovConMoney.Domain.Entities.Contract>(TenantContext.TenantId)
+            .OrderBy(x => x.ContractNumber)
+            .ToList();
+        rows = Reporting.ClinSummary(periodStart.Value, periodEnd.Value, contractId);
+    }
+
+    private string JsonLink()
+    {
+        var url = $"/api/reports/clin-summary?format=json&periodStart={periodStart:yyyy-MM-dd}&periodEnd={periodEnd:yyyy-MM-dd}";
+        if (contractId.HasValue) url += $"&contractId={contractId.Value}";
+        return url;
+    }
+
+    private string CsvLink() => JsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+}

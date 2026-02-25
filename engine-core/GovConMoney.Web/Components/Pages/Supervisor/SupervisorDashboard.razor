@@ -1,0 +1,129 @@
+@page "/supervisor"
+@attribute [Authorize(Roles = "Supervisor")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@inject IRepository Repository
+@inject ITenantContext TenantContext
+
+<h2>Supervisor Dashboard</h2>
+<p>Stub dashboard for supervisor role.</p>
+
+<ul>
+    <li><a href="/supervisor/approvals">Timesheet Approvals</a></li>
+    <li>
+        <a href="/supervisor/overrides">
+            Out-of-Window Overrides
+            @if (pendingApprovalCount > 0)
+            {
+                <span class="badge bg-danger ms-1">@pendingApprovalCount</span>
+            }
+        </a>
+    </li>
+</ul>
+
+@code {
+    private const int StandardDailyMinutes = 8 * 60;
+    private int pendingApprovalCount;
+
+    protected override void OnInitialized()
+    {
+        pendingApprovalCount = CountPendingApprovals();
+    }
+
+    private int CountPendingApprovals()
+    {
+        var tenantId = TenantContext.TenantId;
+        var supervisedUserIds = Repository.Query<PersonnelProfile>(tenantId)
+            .Where(x => x.SupervisorUserId == TenantContext.UserId)
+            .Select(x => x.UserId)
+            .ToHashSet();
+        if (supervisedUserIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var timesheets = Repository.Query<Timesheet>(tenantId)
+            .Where(x => x.Status == TimesheetStatus.Draft || x.Status == TimesheetStatus.Submitted)
+            .Where(x => supervisedUserIds.Contains(x.UserId))
+            .Select(x => new { x.Id, x.UserId })
+            .ToList();
+        if (timesheets.Count == 0)
+        {
+            return 0;
+        }
+
+        var timesheetById = timesheets.ToDictionary(x => x.Id, x => x.UserId);
+        var timesheetIds = timesheets.Select(x => x.Id).ToList();
+
+        var lines = Repository.Query<TimesheetLine>(tenantId)
+            .Where(x => timesheetIds.Contains(x.TimesheetId))
+            .ToList();
+
+        var assignments = Repository.Query<Assignment>(tenantId).ToList();
+        var outOfWindowApprovals = Repository.Query<TimeChargeOverrideApproval>(tenantId).ToList();
+        var overtimeApprovals = Repository.Query<OvertimeAllowanceApproval>(tenantId).ToList();
+        var futurePtoApprovals = Repository.Query<FuturePtoApproval>(tenantId).ToList();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+
+        var workLines = lines.Where(x => x.EntryType == TimesheetEntryType.Work).ToList();
+        var futurePtoLines = lines.Where(x => x.EntryType == TimesheetEntryType.Pto && x.WorkDate > today).ToList();
+
+        var pendingOutOfWindow = workLines
+            .Where(line =>
+            {
+                var userId = timesheetById[line.TimesheetId];
+                var inWindow = assignments.Any(x =>
+                    x.UserId == userId &&
+                    x.ChargeCodeId == line.ChargeCodeId &&
+                    line.WorkDate >= x.EffectiveStartDate &&
+                    line.WorkDate <= x.EffectiveEndDate);
+                if (inWindow)
+                {
+                    return false;
+                }
+
+                var overrideAllowed = assignments.Any(x =>
+                    x.UserId == userId &&
+                    x.ChargeCodeId == line.ChargeCodeId &&
+                    x.SupervisorOverrideAllowed);
+                if (!overrideAllowed)
+                {
+                    return false;
+                }
+
+                var approved = outOfWindowApprovals.Any(x =>
+                    x.UserId == userId &&
+                    x.ChargeCodeId == line.ChargeCodeId &&
+                    x.WorkDate == line.WorkDate);
+                return !approved;
+            })
+            .Select(line => new
+            {
+                UserId = timesheetById[line.TimesheetId],
+                line.WorkDate,
+                line.ChargeCodeId
+            })
+            .Distinct()
+            .Count();
+
+        var pendingOvertime = workLines
+            .GroupBy(line => new { UserId = timesheetById[line.TimesheetId], line.WorkDate })
+            .Select(group =>
+            {
+                var required = Math.Max(0, group.Sum(x => x.Minutes) - StandardDailyMinutes);
+                var approved = overtimeApprovals
+                    .Where(x => x.UserId == group.Key.UserId && x.WorkDate == group.Key.WorkDate)
+                    .Sum(x => x.ApprovedOvertimeMinutes);
+                return new { required, approved };
+            })
+            .Count(x => x.required > x.approved);
+
+        var pendingFuturePto = futurePtoLines
+            .Select(x => new { UserId = timesheetById[x.TimesheetId], x.WorkDate })
+            .Distinct()
+            .Count(x => !futurePtoApprovals.Any(a => a.UserId == x.UserId && a.WorkDate == x.WorkDate));
+
+        return pendingOutOfWindow + pendingOvertime + pendingFuturePto;
+    }
+}

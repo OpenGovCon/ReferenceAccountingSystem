@@ -1,0 +1,425 @@
+@page "/accountant/reports/payroll"
+@attribute [Authorize(Roles = "Accountant")]
+@using GovConMoney.Application.Services
+@using GovConMoney.Infrastructure.Persistence
+@using GovConMoney.Web.Services
+@inject PayrollService Payroll
+@inject InMemoryDataStore Store
+@inject NavigationManager Nav
+@inject PayrollImportPreviewStore PreviewStore
+
+<h3>Accountant - Payroll Reconciliation</h3>
+<p>Import payroll expense batches and reconcile payroll labor actuals to posted labor accruals.</p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (saved)
+{
+    <div class="alert alert-success">Payroll batch imported.</div>
+}
+@if (profileSaved)
+{
+    <div class="alert alert-success">Payroll import profile saved.</div>
+}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Payroll Import Profiles</h5>
+        <p class="card-text"><small>Map payroll extract columns using header names (for example <code>EmployeeId</code>) or zero-based indexes (for example <code>#0</code>).</small></p>
+        <form method="post" action="/api/accountant/payroll/import-profiles-form">
+            @if (editingProfile is not null)
+            {
+                <input type="hidden" name="profileId" value="@editingProfile.Id" />
+            }
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="form-label">Profile Name</label>
+                    <input class="form-control" name="name" value="@ProfileValue(x => x.Name)" required />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Source System</label>
+                    <input class="form-control" name="sourceSystem" value="@ProfileValue(x => x.SourceSystem, "PayrollExtract")" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Delimiter</label>
+                    <input class="form-control" name="delimiter" value="@ProfileValue(x => x.Delimiter, ",")" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Header Row</label>
+                    <select class="form-select" name="hasHeaderRow">
+                        @if (editingProfile is null || editingProfile.HasHeaderRow)
+                        {
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        }
+                        else
+                        {
+                            <option value="true">Yes</option>
+                            <option value="false" selected>No</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Active</label>
+                    <select class="form-select" name="isActive">
+                        @if (editingProfile is null || editingProfile.IsActive)
+                        {
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        }
+                        else
+                        {
+                            <option value="true">Yes</option>
+                            <option value="false" selected>No</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-md-2"><input class="form-control" name="employeeExternalIdColumn" placeholder="Employee Id" value="@ProfileValue(x => x.EmployeeExternalIdColumn)" required /></div>
+                <div class="col-md-2"><input class="form-control" name="laborAmountColumn" placeholder="Labor Amount" value="@ProfileValue(x => x.LaborAmountColumn)" required /></div>
+                <div class="col-md-2"><input class="form-control" name="fringeAmountColumn" placeholder="Fringe Amount" value="@ProfileValue(x => x.FringeAmountColumn)" required /></div>
+                <div class="col-md-2"><input class="form-control" name="taxAmountColumn" placeholder="Tax Amount" value="@ProfileValue(x => x.TaxAmountColumn)" required /></div>
+                <div class="col-md-2"><input class="form-control" name="otherAmountColumn" placeholder="Other Amount" value="@ProfileValue(x => x.OtherAmountColumn)" required /></div>
+                <div class="col-md-2"><input class="form-control" name="notesColumn" placeholder="Notes (optional)" value="@ProfileValue(x => x.NotesColumn)" /></div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-md-4">
+                    <label class="form-label">Required Headers (csv, optional)</label>
+                    <input class="form-control" name="requiredHeadersCsv" value="@ProfileValue(x => x.RequiredHeadersCsv)" placeholder="EmployeeId,Labor,Tax" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Require Known Employee</label>
+                    <select class="form-select" name="requireKnownEmployeeExternalId">
+                        @if (BoolValue(x => x.RequireKnownEmployeeExternalId, true))
+                        {
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        }
+                        else
+                        {
+                            <option value="true">Yes</option>
+                            <option value="false" selected>No</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Disallow Duplicate Emp IDs</label>
+                    <select class="form-select" name="disallowDuplicateEmployeeExternalIds">
+                        @if (BoolValue(x => x.DisallowDuplicateEmployeeExternalIds, true))
+                        {
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        }
+                        else
+                        {
+                            <option value="true">Yes</option>
+                            <option value="false" selected>No</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Require Positive Labor</label>
+                    <select class="form-select" name="requirePositiveLaborAmount">
+                        @if (BoolValue(x => x.RequirePositiveLaborAmount, true))
+                        {
+                            <option value="true" selected>Yes</option>
+                            <option value="false">No</option>
+                        }
+                        else
+                        {
+                            <option value="true">Yes</option>
+                            <option value="false" selected>No</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <button class="btn btn-outline-primary mt-2" type="submit">@((editingProfile is null) ? "Save Profile" : "Update Profile")</button>
+            @if (editingProfile is not null)
+            {
+                <a class="btn btn-link mt-2" href="/accountant/reports/payroll">Cancel edit</a>
+            }
+        </form>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Import Payroll Batch</h5>
+        <p class="card-text"><small>Upload a payroll extract file for preview. You can also paste lines directly. Default pasted format: <code>employeeExternalId,labor,fringe,tax,other,optional note</code>.</small></p>
+        <form method="post" action="/api/accountant/payroll/preview-form" enctype="multipart/form-data">
+            <div class="row g-2">
+                <div class="col-md-3">
+                    <label class="form-label">External Batch Id</label>
+                    <input class="form-control" name="externalBatchId" required />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Source System</label>
+                    <input class="form-control" name="sourceSystem" value="Manual" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Import Profile</label>
+                    <select class="form-select" name="profileId">
+                        @if (!selectedProfileId.HasValue)
+                        {
+                            <option value="" selected>(none - manual column format)</option>
+                        }
+                        else
+                        {
+                            <option value="">(none - manual column format)</option>
+                        }
+                        @foreach (var profile in profiles.Where(x => x.IsActive).OrderBy(x => x.Name))
+                        {
+                            @if (selectedProfileId.HasValue && selectedProfileId.Value == profile.Id)
+                            {
+                                <option value="@profile.Id" selected>@profile.Name (@profile.SourceSystem)</option>
+                            }
+                            else
+                            {
+                                <option value="@profile.Id">@profile.Name (@profile.SourceSystem)</option>
+                            }
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Period Start</label>
+                    <input class="form-control" type="date" name="periodStart" required />
+                </div>
+                <div class="col-md-3 mt-2">
+                    <label class="form-label">Period End</label>
+                    <input class="form-control" type="date" name="periodEnd" required />
+                </div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-md-6">
+                    <label class="form-label">Source Checksum (optional)</label>
+                    <input class="form-control" name="sourceChecksum" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Notes</label>
+                    <input class="form-control" name="notes" />
+                </div>
+            </div>
+            <label class="form-label mt-2">Payroll Extract File</label>
+            <input class="form-control" type="file" name="extractFile" accept=".csv,.txt" />
+            <label class="form-label mt-2">Or Paste Lines</label>
+            <textarea class="form-control" rows="6" name="lines" placeholder="EMP-1001,2200.00,400.00,350.00,0.00"></textarea>
+            <button class="btn btn-primary mt-2" type="submit">Upload & Preview</button>
+        </form>
+    </div>
+</div>
+
+@if (preview is not null)
+{
+    <div class="card mb-3 border-warning">
+        <div class="card-body">
+            <h5 class="card-title">Preview Batch</h5>
+            <p class="card-text"><small>Batch <strong>@preview.ExternalBatchId</strong>, source <strong>@preview.SourceSystem</strong>, period <strong>@preview.PeriodStart - @preview.PeriodEnd</strong>.</small></p>
+            <p class="card-text"><small>Lines: @preview.Lines.Count | Labor Total: @preview.Lines.Sum(x => x.LaborAmount) | Fringe Total: @preview.Lines.Sum(x => x.FringeAmount) | Tax Total: @preview.Lines.Sum(x => x.TaxAmount) | Other Total: @preview.Lines.Sum(x => x.OtherAmount)</small></p>
+            @foreach (var s in preview.ValidationSummary)
+            {
+                @if (string.Equals(s.Severity, "Error", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="text-danger"><small>@s.Message</small></div>
+                }
+                else if (string.Equals(s.Severity, "Warning", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="text-warning"><small>@s.Message</small></div>
+                }
+                else
+                {
+                    <div><small>@s.Message</small></div>
+                }
+            }
+            <form method="post" action="/api/accountant/payroll/import-preview-form">
+                <input type="hidden" name="previewToken" value="@previewToken" />
+                <button class="btn btn-success" type="submit" disabled="@preview.HasBlockingErrors">Import Previewed Batch</button>
+            </form>
+            @if (previewToken.HasValue && preview.ValidationRows.Any(x => !string.Equals(x.Severity, "OK", StringComparison.OrdinalIgnoreCase)))
+            {
+                <p class="mt-2 mb-0">
+                    <a href="@IssuesCsvLink(true)" target="_blank">Download Issues CSV (Errors + Warnings)</a> |
+                    <a href="@IssuesCsvLink(false)" target="_blank">Errors Only CSV</a>
+                </p>
+            }
+            @if (preview.HasBlockingErrors)
+            {
+                <div class="mt-2 text-danger"><small>Import is blocked until all error rows are corrected.</small></div>
+            }
+            <div class="mt-2"><small>Showing first @Math.Min(preview.ValidationRows.Count, 25) rows.</small></div>
+            <table class="table table-sm mt-2">
+                <thead>
+                    <tr><th>Line</th><th>Status</th><th>Employee Id</th><th>Mapped User</th><th>Labor</th><th>Fringe</th><th>Tax</th><th>Other</th><th>Message</th></tr>
+                </thead>
+                <tbody>
+                @foreach (var row in preview.ValidationRows.Take(25))
+                {
+                    <tr class="@RowClass(row.Severity)">
+                        <td>@row.LineNumber</td>
+                        <td>@row.Severity</td>
+                        <td>@row.EmployeeExternalId</td>
+                        <td>@(row.MatchedUserName ?? "(unmapped)")</td>
+                        <td>@row.LaborAmount</td>
+                        <td>@row.FringeAmount</td>
+                        <td>@row.TaxAmount</td>
+                        <td>@row.OtherAmount</td>
+                        <td>@row.Message</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<h5 class="mt-4">Import Profiles</h5>
+<table class="table">
+    <thead>
+        <tr><th>Name</th><th>Source</th><th>Header</th><th>Delimiter</th><th>Employee/Labor</th><th>Rules</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+    @foreach (var profile in profiles.OrderBy(x => x.Name))
+    {
+        <tr>
+            <td>@profile.Name</td>
+            <td>@profile.SourceSystem</td>
+            <td>@(profile.HasHeaderRow ? "Yes" : "No")</td>
+            <td>@profile.Delimiter</td>
+            <td>@profile.EmployeeExternalIdColumn / @profile.LaborAmountColumn</td>
+            <td>Known:@(profile.RequireKnownEmployeeExternalId ? "Y" : "N") Dup:@(profile.DisallowDuplicateEmployeeExternalIds ? "Y" : "N") Labor>0:@(profile.RequirePositiveLaborAmount ? "Y" : "N")</td>
+            <td>@(profile.IsActive ? "Active" : "Inactive")</td>
+            <td><a href="/accountant/reports/payroll?editProfileId=@profile.Id&selectedProfileId=@profile.Id">Edit</a></td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<p>
+    API Export:
+    <a href="@JsonLink()" target="_blank">JSON</a> |
+    <a href="@CsvLink()" target="_blank">CSV</a>
+</p>
+
+<table class="table">
+    <thead>
+        <tr><th>Employee Id</th><th>Employee</th><th>Period</th><th>Accrued Labor</th><th>Payroll Labor</th><th>Variance</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+    @foreach (var row in rows)
+    {
+        <tr>
+            <td>@row.EmployeeExternalId</td>
+            <td>@row.Employee</td>
+            <td>@row.PeriodStart - @row.PeriodEnd</td>
+            <td>@row.AccruedLabor</td>
+            <td>@row.PayrollLabor</td>
+            <td>@row.Variance</td>
+            <td>@row.Status</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h5 class="mt-4">Imported Payroll Batches</h5>
+<table class="table">
+    <thead>
+        <tr><th>Batch</th><th>Source</th><th>Period</th><th>Imported</th><th>Lines</th></tr>
+    </thead>
+    <tbody>
+    @foreach (var batch in batches)
+    {
+        <tr>
+            <td>@batch.ExternalBatchId</td>
+            <td>@batch.SourceSystem</td>
+            <td>@batch.PeriodStart - @batch.PeriodEnd</td>
+            <td>@batch.ImportedAtUtc</td>
+            <td>@lineCounts.GetValueOrDefault(batch.Id)</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [SupplyParameterFromQuery] public DateOnly? fromDate { get; set; }
+    [SupplyParameterFromQuery] public DateOnly? toDate { get; set; }
+
+    private IReadOnlyList<GovConMoney.Application.Models.PayrollReconciliationRow> rows = [];
+    private List<GovConMoney.Domain.Entities.PayrollBatch> batches = [];
+    private List<GovConMoney.Domain.Entities.PayrollImportProfile> profiles = [];
+    private Dictionary<Guid, int> lineCounts = [];
+    private string? error;
+    private bool saved;
+    private bool profileSaved;
+    private GovConMoney.Domain.Entities.PayrollImportProfile? editingProfile;
+    private Guid? selectedProfileId;
+    private Guid? previewToken;
+    private PayrollImportPreview? preview;
+
+    protected override void OnParametersSet()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Nav.ToAbsoluteUri(Nav.Uri).Query);
+        saved = query.TryGetValue("saved", out var savedFlag) && savedFlag == "1";
+        profileSaved = query.TryGetValue("profileSaved", out var profileSavedFlag) && profileSavedFlag == "1";
+        error = query.TryGetValue("error", out var err) ? err.ToString() : null;
+
+        rows = Payroll.Reconciliation(fromDate, toDate);
+        batches = Store.PayrollBatches.OrderByDescending(x => x.ImportedAtUtc).ToList();
+        profiles = Store.PayrollImportProfiles.ToList();
+        lineCounts = Store.PayrollLines.GroupBy(x => x.PayrollBatchId).ToDictionary(x => x.Key, x => x.Count());
+
+        selectedProfileId = null;
+        editingProfile = null;
+        if (query.TryGetValue("selectedProfileId", out var selectedRaw) && Guid.TryParse(selectedRaw, out var selectedId))
+        {
+            selectedProfileId = selectedId;
+        }
+
+        if (query.TryGetValue("editProfileId", out var editRaw) && Guid.TryParse(editRaw, out var editId))
+        {
+            editingProfile = profiles.SingleOrDefault(x => x.Id == editId);
+        }
+
+        preview = null;
+        previewToken = null;
+        if (query.TryGetValue("previewToken", out var previewRaw) && Guid.TryParse(previewRaw, out var parsedPreviewToken))
+        {
+            previewToken = parsedPreviewToken;
+            preview = PreviewStore.Get(parsedPreviewToken);
+            if (preview is null)
+            {
+                error ??= "Preview expired. Upload and preview again.";
+            }
+        }
+    }
+
+    private string JsonLink()
+    {
+        var url = "/api/reports/payroll-reconciliation?format=json";
+        if (fromDate.HasValue) url += $"&fromDate={fromDate:yyyy-MM-dd}";
+        if (toDate.HasValue) url += $"&toDate={toDate:yyyy-MM-dd}";
+        return url;
+    }
+
+    private string CsvLink() => JsonLink().Replace("format=json", "format=csv", StringComparison.OrdinalIgnoreCase);
+
+    private string ProfileValue(Func<GovConMoney.Domain.Entities.PayrollImportProfile, string?> selector, string fallback = "")
+        => editingProfile is null ? fallback : selector(editingProfile) ?? fallback;
+
+    private bool BoolValue(Func<GovConMoney.Domain.Entities.PayrollImportProfile, bool> selector, bool fallback)
+        => editingProfile is null ? fallback : selector(editingProfile);
+
+    private static string RowClass(string severity) =>
+        string.Equals(severity, "Error", StringComparison.OrdinalIgnoreCase)
+            ? "table-danger"
+            : string.Equals(severity, "Warning", StringComparison.OrdinalIgnoreCase)
+                ? "table-warning"
+                : "table-success";
+
+    private string IssuesCsvLink(bool includeWarnings)
+        => previewToken.HasValue
+            ? $"/api/accountant/payroll/preview-issues-csv?previewToken={previewToken.Value}&includeWarnings={includeWarnings.ToString().ToLowerInvariant()}"
+            : "#";
+
+}

@@ -1,0 +1,280 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "Admin")]
+@using GovConMoney.Application.Abstractions
+@using GovConMoney.Domain.Entities
+@using GovConMoney.Domain.Enums
+@using GovConMoney.Infrastructure.Persistence
+@using GovConMoney.Web.Security
+@using Microsoft.AspNetCore.Identity
+@using System.Text.Json
+@inject InMemoryDataStore Store
+@inject UserManager<GovConIdentityUser> UserManager
+@inject IAuditService Audit
+@inject ITenantContext TenantContext
+
+<h3>Admin - User Management</h3>
+<p>API view: <a href="/api/admin/users" target="_blank">/api/admin/users</a></p>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert alert-success">@message</div>
+}
+
+<table class="table">
+    <thead>
+        <tr><th>User</th><th>Employee ID</th><th>Roles</th><th>Role Actions</th><th>MFA</th><th>Passkey Required</th><th>Disabled</th></tr>
+    </thead>
+    <tbody>
+    @foreach (var user in users.OrderBy(x => x.UserName))
+    {
+        <tr>
+            <td>@user.UserName</td>
+            <td>
+                <form method="post" action="/api/admin/users/@user.Id/employee-id-form">
+                    <div class="input-group input-group-sm">
+                        <input class="form-control" name="employeeExternalId" value="@user.EmployeeExternalId" />
+                        <button class="btn btn-outline-secondary" type="submit">Save</button>
+                    </div>
+                </form>
+            </td>
+            <td>@string.Join(", ", user.Roles.OrderBy(x => x))</td>
+            <td>
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var role in manageableRoles)
+                    {
+                        var hasRole = user.Roles.Contains(role, StringComparer.OrdinalIgnoreCase);
+                        <form method="post" action="/api/admin/users/@user.Id/roles-form" class="d-inline">
+                            <input type="hidden" name="role" value="@role" />
+                            <input type="hidden" name="action" value="@(hasRole ? "remove" : "add")" />
+                            <button class="btn btn-sm @(hasRole ? "btn-outline-danger" : "btn-outline-success")" type="submit">
+                                @(hasRole ? $"- {role}" : $"+ {role}")
+                            </button>
+                        </form>
+                    }
+                </div>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => ToggleMfaAsync(user.Id)" disabled="@isBusy">@((user.MfaEnabled) ? "Disable" : "Enable")</button>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => TogglePasskeyAsync(user.Id)" disabled="@isBusy">@((user.PasskeyRequired) ? "Disable" : "Enable")</button>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => ToggleDisabledAsync(user.Id)" disabled="@isBusy">@((user.IsDisabled) ? "Enable" : "Disable")</button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private List<UserRow> users = [];
+    private string? error;
+    private string? message;
+    private bool isBusy;
+    private static readonly string[] manageableRoles = ["Admin", "Compliance", "TimeReporter", "Supervisor", "Accountant", "Manager"];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            var tenantId = TenantContext.TenantId;
+            var rows = new List<UserRow>();
+            foreach (var appUser in Store.Users.Where(x => x.TenantId == tenantId).OrderBy(x => x.UserName))
+            {
+                var identity = await UserManager.FindByIdAsync(appUser.Id.ToString());
+                var roles = identity is null ? appUser.Roles.ToList() : (await UserManager.GetRolesAsync(identity)).ToList();
+                rows.Add(new UserRow
+                {
+                    Id = appUser.Id,
+                    UserName = appUser.UserName,
+                    EmployeeExternalId = appUser.EmployeeExternalId,
+                    Roles = roles,
+                    MfaEnabled = identity?.TwoFactorEnabled ?? appUser.MfaEnabled,
+                    PasskeyRequired = identity?.PasskeyRequired ?? appUser.PasskeyRequired,
+                    IsDisabled = identity?.LockoutEnd.HasValue == true && identity.LockoutEnd > DateTimeOffset.UtcNow
+                });
+            }
+
+            users = rows;
+            error = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ToggleMfaAsync(Guid userId)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var user = Store.Users.SingleOrDefault(x => x.Id == userId) ?? throw new InvalidOperationException("User not found.");
+            var identity = await UserManager.FindByIdAsync(userId.ToString()) ?? throw new InvalidOperationException("Identity user not found.");
+
+            var before = user.MfaEnabled;
+            user.MfaEnabled = !user.MfaEnabled;
+            Store.SaveChanges();
+            await UserManager.SetTwoFactorEnabledAsync(identity, user.MfaEnabled);
+            Audit.Record(new AuditEvent
+            {
+                TenantId = user.TenantId,
+                EntityType = "AppUser",
+                EntityId = user.Id,
+                EventType = EventType.MfaEnrollment,
+                ActorUserId = TenantContext.UserId,
+                ActorRoles = string.Join(",", TenantContext.Roles),
+                OccurredAtUtc = DateTime.UtcNow,
+                ReasonForChange = $"MFA toggled from {before} to {user.MfaEnabled}",
+                BeforeJson = JsonSerializer.Serialize(new { mfaEnabled = before }),
+                AfterJson = JsonSerializer.Serialize(new { mfaEnabled = user.MfaEnabled }),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+
+            message = "MFA updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task TogglePasskeyAsync(Guid userId)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var user = Store.Users.SingleOrDefault(x => x.Id == userId) ?? throw new InvalidOperationException("User not found.");
+            var identity = await UserManager.FindByIdAsync(userId.ToString()) ?? throw new InvalidOperationException("Identity user not found.");
+
+            var before = user.PasskeyRequired;
+            user.PasskeyRequired = !user.PasskeyRequired;
+            Store.SaveChanges();
+            identity.PasskeyRequired = user.PasskeyRequired;
+            await UserManager.UpdateAsync(identity);
+
+            var claims = await UserManager.GetClaimsAsync(identity);
+            foreach (var claim in claims.Where(x => x.Type == "passkey_required").ToList())
+            {
+                await UserManager.RemoveClaimAsync(identity, claim);
+            }
+
+            await UserManager.AddClaimAsync(identity, new System.Security.Claims.Claim("passkey_required", user.PasskeyRequired.ToString().ToLowerInvariant()));
+            Audit.Record(new AuditEvent
+            {
+                TenantId = user.TenantId,
+                EntityType = "AppUser",
+                EntityId = user.Id,
+                EventType = EventType.PasskeyEnrollment,
+                ActorUserId = TenantContext.UserId,
+                ActorRoles = string.Join(",", TenantContext.Roles),
+                OccurredAtUtc = DateTime.UtcNow,
+                ReasonForChange = $"PasskeyRequired toggled from {before} to {user.PasskeyRequired}",
+                BeforeJson = JsonSerializer.Serialize(new { passkeyRequired = before }),
+                AfterJson = JsonSerializer.Serialize(new { passkeyRequired = user.PasskeyRequired }),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+
+            message = "Passkey requirement updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ToggleDisabledAsync(Guid userId)
+    {
+        if (!BeginAction()) return;
+        try
+        {
+            var user = Store.Users.SingleOrDefault(x => x.Id == userId) ?? throw new InvalidOperationException("User not found.");
+            var identity = await UserManager.FindByIdAsync(userId.ToString()) ?? throw new InvalidOperationException("Identity user not found.");
+
+            var before = user.IsDisabled;
+            user.IsDisabled = !user.IsDisabled;
+            Store.SaveChanges();
+            if (user.IsDisabled)
+            {
+                await UserManager.SetLockoutEndDateAsync(identity, DateTimeOffset.MaxValue);
+            }
+            else
+            {
+                await UserManager.SetLockoutEndDateAsync(identity, null);
+                await UserManager.ResetAccessFailedCountAsync(identity);
+            }
+
+            Audit.Record(new AuditEvent
+            {
+                TenantId = user.TenantId,
+                EntityType = "AppUser",
+                EntityId = user.Id,
+                EventType = EventType.DisableUser,
+                ActorUserId = TenantContext.UserId,
+                ActorRoles = string.Join(",", TenantContext.Roles),
+                OccurredAtUtc = DateTime.UtcNow,
+                ReasonForChange = $"Disabled toggled from {before} to {user.IsDisabled}",
+                BeforeJson = JsonSerializer.Serialize(new { disabled = before }),
+                AfterJson = JsonSerializer.Serialize(new { disabled = user.IsDisabled }),
+                CorrelationId = Guid.NewGuid().ToString("N")
+            });
+
+            message = "User status updated.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private bool BeginAction()
+    {
+        if (isBusy)
+        {
+            return false;
+        }
+
+        isBusy = true;
+        error = null;
+        message = null;
+        return true;
+    }
+
+    private sealed class UserRow
+    {
+        public Guid Id { get; set; }
+        public string UserName { get; set; } = string.Empty;
+        public string EmployeeExternalId { get; set; } = string.Empty;
+        public List<string> Roles { get; set; } = [];
+        public bool MfaEnabled { get; set; }
+        public bool PasskeyRequired { get; set; }
+        public bool IsDisabled { get; set; }
+    }
+}

@@ -1,0 +1,267 @@
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject GovConMoney.Application.Services.NotificationService NotificationsService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject GovConMoney.Infrastructure.Persistence.InMemoryDataStore Store
+
+<div class="top-nav-wrap">
+    <nav class="top-nav">
+        <div class="brand-wrap">
+            <NavLink class="brand" href="home">GovConMoney</NavLink>
+        </div>
+
+        <div class="link-wrap">
+            <AuthorizeView>
+                <Authorized>
+                    <NavLink class="menu-link" href="home">Home</NavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Admin">
+                <NavLink class="menu-link" href="admin">Admin</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Compliance">
+                <NavLink class="menu-link" href="compliance">Compliance</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="TimeReporter">
+                <NavLink class="menu-link" href="timereporter">Time Cards</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Supervisor">
+                <NavLink class="menu-link" href="supervisor">Supervisor</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Accountant">
+                <NavLink class="menu-link" href="accountant">Accountant</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Manager">
+                <NavLink class="menu-link" href="manager">Manager</NavLink>
+            </AuthorizeView>
+
+            <AuthorizeView>
+                <NotAuthorized>
+                    <NavLink class="menu-link" href="auth/login">Login</NavLink>
+                    <NavLink class="menu-link" href="auth/enroll">Enroll</NavLink>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+
+        <div class="role-wrap">
+            @if (IsOnDashboard("admin"))
+            {
+                <AuthorizeView Roles="Admin">
+                    <details class="role-dropdown">
+                        <summary>Admin Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="admin/users">Users</NavLink>
+                            <NavLink class="sub-link" href="admin/security">Security Policies</NavLink>
+                            <NavLink class="sub-link" href="admin/notifications">Notifications</NavLink>
+                            <NavLink class="sub-link" href="admin/audit">Audit</NavLink>
+                            <NavLink class="sub-link" href="admin/enrollments">Enrollments</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+            else if (IsOnDashboard("compliance"))
+            {
+                <AuthorizeView Roles="Compliance">
+                    <details class="role-dropdown">
+                        <summary>Compliance Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="compliance/contracts">Contracts</NavLink>
+                            <NavLink class="sub-link" href="compliance/assignments">Assignments</NavLink>
+                            <NavLink class="sub-link" href="compliance/periods">Periods</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+            else if (IsOnDashboard("timereporter"))
+            {
+                <AuthorizeView Roles="TimeReporter">
+                    <details class="role-dropdown">
+                        <summary>Time Card Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="timereporter/timecards">Time Cards</NavLink>
+                            <NavLink class="sub-link" href="timereporter/status">Time Card Status</NavLink>
+                            <NavLink class="sub-link" href="timereporter/corrections">Corrections</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+            else if (IsOnDashboard("supervisor"))
+            {
+                <AuthorizeView Roles="Supervisor">
+                    <details class="role-dropdown">
+                        <summary>Supervisor Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="supervisor/approvals">Approvals</NavLink>
+                            <NavLink class="sub-link" href="supervisor/overrides">Overrides</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+            else if (IsOnDashboard("accountant"))
+            {
+                <AuthorizeView Roles="Accountant">
+                    <details class="role-dropdown">
+                        <summary>Accounting Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="accountant/expenses/categories">Expense Categories</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/labor">Labor</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/project">Project</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/clin-summary">CLIN Summary</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/compliance">Compliance</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/audit">Audit</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/journal">Journal</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/adjusting-journal">Adjusting Journal</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/payroll">Payroll</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/billing">Billing</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/indirect">Indirect Rates</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/trial-balance">Trial Balance</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/period-close">Period Close</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+            else if (IsOnDashboard("manager"))
+            {
+                <AuthorizeView Roles="Manager">
+                    <details class="role-dropdown">
+                        <summary>Manager Menu</summary>
+                        <div class="role-panel">
+                            <NavLink class="sub-link" href="manager">Dashboard</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/period-close">Period Close Review</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/indirect">Indirect Rate Review</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/billing">Billing Review</NavLink>
+                            <NavLink class="sub-link" href="accountant/reports/adjusting-journal">Adjusting Entries Review</NavLink>
+                        </div>
+                    </details>
+                </AuthorizeView>
+            }
+        </div>
+
+        <div class="account-wrap">
+            <AuthorizeView>
+                <Authorized Context="authContext">
+                    <details class="account-dropdown">
+                        <summary>
+                            @(authContext.User.Identity?.Name ?? "Account")
+                            @if (unreadNotificationCount > 0)
+                            {
+                                <span class="notif-badge">@unreadNotificationCount</span>
+                            }
+                        </summary>
+                        <div class="account-panel">
+                            @if (showSetupPasskey)
+                            {
+                                <a href="/security/passkeys">Setup Passkey</a>
+                            }
+                            <a href="/notifications">
+                                Notifications
+                                @if (unreadNotificationCount > 0)
+                                {
+                                    <span class="notif-badge-inline">@unreadNotificationCount</span>
+                                }
+                            </a>
+                            <a href="/security/passkeys">Security</a>
+                            <form method="post" action="/logout">
+                                <button type="submit">Logout</button>
+                            </form>
+                        </div>
+                    </details>
+                </Authorized>
+                <NotAuthorized>
+                    <a class="menu-link" href="auth/login">Sign In</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </nav>
+</div>
+
+@code {
+    private string currentPath = string.Empty;
+    private int unreadNotificationCount;
+    private bool showSetupPasskey;
+
+    protected override void OnInitialized()
+    {
+        SetCurrentPath();
+        _ = RefreshNotificationCountAsync();
+        _ = RefreshSecuritySetupAsync();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        SetCurrentPath();
+        _ = RefreshNotificationCountAsync();
+        _ = RefreshSecuritySetupAsync();
+    }
+
+    private void SetCurrentPath()
+    {
+        currentPath = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var queryIndex = currentPath.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            currentPath = currentPath[..queryIndex];
+        }
+
+        currentPath = currentPath.Trim('/').ToLowerInvariant();
+    }
+
+    private bool IsOnDashboard(string root)
+    {
+        return currentPath == root;
+    }
+
+    private async Task RefreshNotificationCountAsync()
+    {
+        try
+        {
+            unreadNotificationCount = NotificationsService.GetInbox(includeRead: false, take: 200).Count;
+        }
+        catch
+        {
+            unreadNotificationCount = 0;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshSecuritySetupAsync()
+    {
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var principal = authState.User;
+            if (principal.Identity?.IsAuthenticated != true)
+            {
+                showSetupPasskey = false;
+            }
+            else if (!Guid.TryParse(principal.FindFirst("tenant_id")?.Value, out var tenantId) ||
+                     !Guid.TryParse(principal.FindFirst("domain_user_id")?.Value, out var userId))
+            {
+                showSetupPasskey = false;
+            }
+            else
+            {
+                showSetupPasskey = !Store.PasskeyCredentials.Any(x => x.TenantId == tenantId && x.UserId == userId);
+            }
+        }
+        catch
+        {
+            showSetupPasskey = false;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+}
